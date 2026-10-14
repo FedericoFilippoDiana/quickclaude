@@ -4,6 +4,8 @@ use std::sync::Mutex;
 
 use tauri::menu::{Menu, MenuItem};
 use tauri::tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent};
+use serde::{Deserialize, Serialize};
+use tauri::path::BaseDirectory;
 use tauri::{AppHandle, Emitter, LogicalPosition, Manager, RunEvent, WebviewWindow, WindowEvent};
 use tauri_plugin_global_shortcut::{GlobalShortcutExt, ShortcutState};
 use tauri_plugin_notification::NotificationExt;
@@ -24,6 +26,64 @@ fn agent_command() -> std::io::Result<Command> {
     }
 }
 
+/// Preferences (⌘,), saved in ~/Library/Application Support/QuickClaude/settings.json.
+#[derive(Clone, Serialize, Deserialize)]
+#[serde(default, rename_all = "camelCase")]
+struct Prefs {
+    /// When a chat finishes while you're away, bring QuickClaude forward with that chat open.
+    bring_forward: bool,
+    /// Play a short sound when a chat finishes while you're away.
+    sound: bool,
+    /// Show a macOS notification when a chat finishes while you're away.
+    notification: bool,
+}
+
+impl Default for Prefs {
+    fn default() -> Self {
+        Self { bring_forward: false, sound: true, notification: true }
+    }
+}
+
+fn prefs_path() -> Option<std::path::PathBuf> {
+    let home = std::env::var_os("HOME")?;
+    Some(std::path::Path::new(&home).join("Library/Application Support/QuickClaude/settings.json"))
+}
+
+fn load_prefs() -> Prefs {
+    prefs_path()
+        .and_then(|p| std::fs::read_to_string(p).ok())
+        .and_then(|s| serde_json::from_str(&s).ok())
+        .unwrap_or_default()
+}
+
+#[tauri::command]
+fn get_prefs(prefs: tauri::State<Mutex<Prefs>>) -> Prefs {
+    prefs.lock().unwrap().clone()
+}
+
+#[tauri::command]
+fn set_prefs(new: Prefs, prefs: tauri::State<Mutex<Prefs>>) -> Result<(), String> {
+    let path = prefs_path().ok_or("no home folder")?;
+    if let Some(dir) = path.parent() {
+        std::fs::create_dir_all(dir).map_err(|e| e.to_string())?;
+    }
+    std::fs::write(&path, serde_json::to_string_pretty(&new).unwrap()).map_err(|e| e.to_string())?;
+    *prefs.lock().unwrap() = new;
+    Ok(())
+}
+
+fn play_sound(app: &AppHandle) {
+    if let Ok(sound) = app.path().resolve("sounds/reply.mp3", BaseDirectory::Resource) {
+        let _ = Command::new("afplay").arg(sound).spawn();
+    }
+}
+
+/// Lets you hear the sound when you switch it on in ⌘,.
+#[tauri::command]
+fn preview_sound(app: AppHandle) {
+    play_sound(&app);
+}
+
 #[derive(Default)]
 struct Agent {
     child: Mutex<Option<Child>>,
@@ -32,13 +92,30 @@ struct Agent {
     notified: Mutex<Option<String>>,
 }
 
-/// A reply that arrived on its own (a background task finished). Notify unless you're looking at it.
+/// A chat finished. If you're looking at it, do nothing; otherwise call for attention as set in ⌘,.
 fn notify(app: &AppHandle, line: &str) {
     let Ok(msg) = serde_json::from_str::<serde_json::Value>(line) else {
         return;
     };
     let on_screen = msg["current"].as_bool().unwrap_or(false) && panel(app).is_visible().unwrap_or(false);
     if on_screen {
+        return;
+    }
+    let prefs = app.state::<Mutex<Prefs>>().lock().unwrap().clone();
+    if prefs.sound {
+        play_sound(app);
+    }
+    let id = msg["id"].as_str().map(String::from);
+    // Don't pull you away from another chat you're working in; notify instead.
+    if prefs.bring_forward && !panel(app).is_visible().unwrap_or(false) {
+        // Switch to the chat first, so showing the panel doesn't clear it as a finished answer.
+        if let Some(id) = id {
+            let _ = panel(app).emit("open-chat", id);
+        }
+        show_panel(app);
+        return;
+    }
+    if !prefs.notification {
         return;
     }
     let short = |s: &str, n: usize| {
@@ -51,7 +128,7 @@ fn notify(app: &AppHandle, line: &str) {
     };
     let title = short(msg["title"].as_str().unwrap_or(""), 60);
     let text = short(msg["text"].as_str().unwrap_or(""), 200);
-    *app.state::<Agent>().notified.lock().unwrap() = msg["id"].as_str().map(String::from);
+    *app.state::<Agent>().notified.lock().unwrap() = id;
     let _ = app
         .notification()
         .builder()
@@ -168,7 +245,8 @@ pub fn run() {
                 .build(),
         )
         .manage(Agent::default())
-        .invoke_handler(tauri::generate_handler![agent_send])
+        .manage(Mutex::new(load_prefs()))
+        .invoke_handler(tauri::generate_handler![agent_send, get_prefs, set_prefs, preview_sound])
         .setup(move |app| {
             // Menu-bar app: no Dock icon, no app switcher entry.
             #[cfg(target_os = "macos")]
@@ -179,14 +257,21 @@ pub fn run() {
             }
 
             let show = MenuItem::with_id(app, "show", "Show QuickClaude", true, None::<&str>)?;
+            let prefs = MenuItem::with_id(app, "prefs", "Preferences…", true, None::<&str>)?;
             let quit = MenuItem::with_id(app, "quit", "Quit", true, None::<&str>)?;
             TrayIconBuilder::new()
-                .icon(app.default_window_icon().unwrap().clone())
+                // A one-colour spark that macOS tints for light and dark menu bars.
+                .icon(tauri::image::Image::from_bytes(include_bytes!("../icons/tray.png"))?)
+                .icon_as_template(true)
                 .tooltip(format!("QuickClaude ({hotkey})"))
-                .menu(&Menu::with_items(app, &[&show, &quit])?)
+                .menu(&Menu::with_items(app, &[&show, &prefs, &quit])?)
                 .show_menu_on_left_click(false)
                 .on_menu_event(|app, event| match event.id.as_ref() {
                     "show" => show_panel(app),
+                    "prefs" => {
+                        show_panel(app);
+                        let _ = panel(app).emit("open-prefs", ());
+                    }
                     "quit" => app.exit(0),
                     _ => {}
                 })

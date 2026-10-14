@@ -1,0 +1,12 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 1024 1024">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#3a3a3f"/><stop offset="1" stop-color="#1b1b1e"/></linearGradient>
+    <linearGradient id="coral" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#f0956f"/><stop offset="1" stop-color="#c4573a"/></linearGradient>
+    <radialGradient id="glow" cx=".5" cy=".5" r=".5"><stop offset="0" stop-color="#ffd2b8" stop-opacity=".9"/><stop offset="1" stop-color="#d97757" stop-opacity="0"/></radialGradient>
+    <filter id="shadow" x="-10%" y="-10%" width="120%" height="125%"><feDropShadow dx="0" dy="12" stdDeviation="14" flood-color="#000" flood-opacity=".3"/></filter>
+  </defs>
+  <rect x="100" y="100" width="824" height="824" rx="185" fill="url(#bg)" filter="url(#shadow)"/>
+  <rect x="100.5" y="100.5" width="823" height="823" rx="184.5" fill="none" stroke="#fff" stroke-opacity=".08"/>
+  <circle cx="512" cy="512" r="300" fill="url(#glow)" opacity=".35"/>
+  <path d="M0-100 C8-30 30-8 100 0 C30 8 8 30 0 100 C-8 30 -30 8 -100 0 C-30 -8 -8 -30 0 -100Z" transform="translate(512 512) scale(2.7)" fill="url(#coral)"/>
+</svg>

@@ -15,7 +15,7 @@
 //        {type:"tasks", turn, count}  background tasks of the open chat
 //        {type:"wake", turn}          the open chat started a turn on its own (a background task finished)
 //        {type:"activity", ids}       chats with a turn or background task running
-//        {type:"notify", id, title, text, current}  a reply nobody asked for just now; the shell may notify
+//        {type:"notify", id, title, text, current}  a chat finished; the shell alerts you if you're away
 //        {type:"handoff", id} | {type:"error", turn?, message}
 //
 // Auth comes from the local `claude` login (your Claude subscription).
@@ -329,14 +329,13 @@ async function pump(s) {
             costUsd: m.total_cost_usd,
           });
         }
-        // A reply you didn't wait for on screen: let the shell decide whether to notify.
-        if ((s.woke || s.parked) && s.id) {
-          const text = (s.reply || m.result || "").trim();
-          emit({ type: "notify", id: s.id, title: s.title ?? "", text, current: onScreen() });
-        }
+        const text = (s.reply || m.result || "").trim();
         s.inTurn = false;
         s.woke = false;
         s.hadText = false;
+        // Fully finished (nothing left running in the background): the shell decides whether
+        // you're looking at it, and otherwise plays a sound, notifies or brings the chat forward.
+        if (s.id && !working(s)) emit({ type: "notify", id: s.id, title: s.title ?? "", text, current: onScreen() });
         broadcast();
         if (s.parked && !working(s)) closeSession(s);
         // Start the next spare once this answer is out, so it never competes with it.

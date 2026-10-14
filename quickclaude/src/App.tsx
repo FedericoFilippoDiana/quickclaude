@@ -129,7 +129,27 @@ function UserBody(props: { msg: Msg }) {
   );
 }
 
-type Overlay = "none" | "history";
+type Overlay = "none" | "history" | "prefs";
+type Prefs = { bringForward: boolean; sound: boolean; notification: boolean };
+
+// The settings in ⌘, (stored by the shell), in display order.
+const PREF_ROWS: { key: keyof Prefs; title: string; detail: string }[] = [
+  {
+    key: "bringForward",
+    title: "Bring QuickClaude forward",
+    detail: "When a chat finishes while you're away, open the panel with that chat.",
+  },
+  {
+    key: "sound",
+    title: "Play a sound",
+    detail: "A short chime when a chat finishes while you're away.",
+  },
+  {
+    key: "notification",
+    title: "Show a notification",
+    detail: "A macOS notification with the reply. Skipped when QuickClaude comes forward.",
+  },
+];
 
 export default function App() {
   const [messages, setMessages] = createStore<Msg[]>([]);
@@ -163,7 +183,7 @@ export default function App() {
   const win = getCurrentWindow();
   const last = () => messages.length - 1;
   const lastAnswer = () => messages[last()];
-  const tall = () => overlay() === "history" || mode() === "chat";
+  const tall = () => overlay() === "history" || (mode() === "chat" && overlay() !== "prefs");
 
   // --- model & effort ---
   const modelName = () => models().find((m) => m.value === model())?.name ?? "";
@@ -273,6 +293,36 @@ export default function App() {
     // Land on the chat that follows the first deleted one.
     setSelected(filtered().indexOf(rows[0]));
     for (const row of rows) send({ type: "delete", id: row.id });
+  }
+
+  // --- preferences (⌘,) ---
+  const [prefs, setPrefs] = createSignal<Prefs | null>(null);
+  const [prefRow, setPrefRow] = createSignal(0);
+  async function openPrefs() {
+    setPrefRow(0);
+    setOverlay("prefs");
+    setPrefs(await invoke<Prefs>("get_prefs"));
+  }
+  function togglePref(key: keyof Prefs) {
+    const p = prefs();
+    if (!p) return;
+    const next = { ...p, [key]: !p[key] };
+    setPrefs(next);
+    invoke("set_prefs", { new: next }).catch((e) => setNotice(`Couldn't save preferences: ${e}`));
+    if (key === "sound" && next.sound) invoke("preview_sound");
+  }
+  function onPrefsKey(e: KeyboardEvent) {
+    const n = PREF_ROWS.length;
+    if (e.key === "ArrowDown" || e.key === "ArrowUp") {
+      e.preventDefault();
+      setPrefRow((i) => (i + (e.key === "ArrowDown" ? 1 : n - 1)) % n);
+    } else if (e.key === " " || e.key === "Enter") {
+      e.preventDefault();
+      togglePref(PREF_ROWS[prefRow()].key);
+    } else if (e.key === "Escape") {
+      e.preventDefault();
+      setOverlay("none");
+    }
   }
 
   function showHistory() {
@@ -575,6 +625,16 @@ export default function App() {
 
   // Selecting text in the chat moves focus off the input; the panel's keys should still work.
   function onWindowKeyDown(e: KeyboardEvent) {
+    if (e.metaKey && e.key === ",") {
+      e.preventDefault();
+      if (overlay() === "prefs") setOverlay("none");
+      else {
+        if (overlay() === "history") closeOverlay();
+        openPrefs();
+      }
+      return;
+    }
+    if (overlay() === "prefs") return onPrefsKey(e);
     if (e.target === input) return;
     const panelKey = e.key === "Escape" || e.key === "Tab" || (e.metaKey && ["t", "n", "."].includes(e.key));
     if (!panelKey) return;
@@ -590,6 +650,7 @@ export default function App() {
     observer.observe(panel);
     const unlisten = Promise.all([
       listen<string>("agent", (e) => onAgent(JSON.parse(e.payload))),
+      listen("open-prefs", () => openPrefs()),
       listen<string>("open-chat", (e) => {
         if (sessionId() !== e.payload) openSession({ id: e.payload, title: "", at: 0 });
         else setMode("chat");
@@ -714,6 +775,38 @@ export default function App() {
     </div>
   );
 
+  const prefsView = (
+    <>
+      <div class="prefs-head">Preferences</div>
+      <div class="prefs">
+        <For each={PREF_ROWS}>
+          {(row, i) => (
+            <button
+              class="pref"
+              classList={{ selected: i() === prefRow() }}
+              onMouseMove={() => setPrefRow(i())}
+              onClick={() => togglePref(row.key)}
+            >
+              <span class="pref-text">
+                <span class="pref-title">{row.title}</span>
+                <span class="pref-detail">{row.detail}</span>
+              </span>
+              <span class="switch" classList={{ on: !!prefs()?.[row.key] }} role="switch" aria-checked={!!prefs()?.[row.key]}>
+                <span class="knob" />
+              </span>
+            </button>
+          )}
+        </For>
+      </div>
+      <div class="prefs-foot">
+        <span>⌥Space opens QuickClaude · chats live in ~/QuickClaude</span>
+        <span class="hint">↑↓ choose</span>
+        <span class="hint">space toggle</span>
+        <span class="hint">esc close</span>
+      </div>
+    </>
+  );
+
   const historyView = (
     <>
       {bar}
@@ -761,9 +854,10 @@ export default function App() {
     <div
       ref={panel}
       class="panel"
-      classList={{ tall: tall(), chat: mode() === "chat" && overlay() !== "history" }}
+      classList={{ tall: tall(), chat: mode() === "chat" && overlay() === "none" }}
       onClick={onClick}
     >
+      <Show when={overlay() !== "prefs"} fallback={prefsView}>
       <Show when={overlay() !== "history"} fallback={historyView}>
         <Show
           when={mode() === "chat"}
@@ -832,6 +926,7 @@ export default function App() {
           </div>
           {bar}
         </Show>
+      </Show>
       </Show>
     </div>
   );

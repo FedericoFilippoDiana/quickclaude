@@ -16,6 +16,7 @@ Most of my questions for Claude are quick ones, but asking meant switching to a 
 - **↓** on an empty input browses your past QuickClaude chats. Select several with **⇧↑↓**, **⇧click**, **⌘click** or **⌘A**, and press **⌫** twice to delete them.
 - **⌘V** pastes an image into the question.
 - **⌘T** continues the conversation in your terminal: as a new [herdr](https://herdr.dev) workspace if herdr is running, otherwise in a new Ghostty or Terminal window.
+- **⌘,** opens preferences: a sound, a notification, or bringing the chat forward when a reply finishes while you're away.
 - **Esc** steps back: closes a list, clears the input, then hides the panel.
 
 ## What you need

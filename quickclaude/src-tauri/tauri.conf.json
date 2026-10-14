@@ -52,6 +52,9 @@
     ],
     "externalBin": [
       "binaries/quickclaude-agent"
-    ]
+    ],
+    "resources": {
+      "sounds/reply.mp3": "sounds/reply.mp3"
+    }
   }
 }

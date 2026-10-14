@@ -1,0 +1,211 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>QuickClaude Icons</title>
+<style>
+  :root {
+    --bg: #f4f2ee;
+    --card: #ffffff;
+    --text: #1d1c1a;
+    --muted: #6f6b64;
+    --line: rgba(0, 0, 0, 0.08);
+    --coral: #d97757;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --bg: #161618;
+      --card: #202023;
+      --text: #f1efea;
+      --muted: #9b978f;
+      --line: rgba(255, 255, 255, 0.08);
+    }
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    background: var(--bg);
+    color: var(--text);
+    font: 15px/1.5 -apple-system, BlinkMacSystemFont, "SF Pro Text", system-ui, sans-serif;
+  }
+  main { max-width: 1180px; margin: 0 auto; padding: 48px 16px 80px; }
+  h1 { font: 600 30px/1.2 -apple-system, BlinkMacSystemFont, "SF Pro Display", system-ui, sans-serif; margin: 0 0 8px; letter-spacing: -0.01em; }
+  .lede { color: var(--muted); margin: 0 0 36px; max-width: 680px; }
+  .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); gap: 18px; }
+  .card {
+    background: var(--card);
+    border: 1px solid var(--line);
+    border-radius: 16px;
+    padding: 22px 20px 20px;
+    display: flex;
+    flex-direction: column;
+    gap: 14px;
+  }
+  .stage { display: flex; align-items: flex-end; gap: 18px; }
+  .stage svg.big { width: 150px; height: 150px; filter: drop-shadow(0 10px 18px rgba(0,0,0,0.22)); }
+  .smalls { display: flex; flex-direction: column; gap: 10px; align-items: center; padding-bottom: 6px; }
+  .smalls svg { display: block; }
+  .menubar {
+    display: flex; align-items: center; gap: 8px;
+    height: 24px; padding: 0 8px; border-radius: 6px;
+    background: #2b2b2e; color: #fff;
+  }
+  .menubar.light { background: #e9e7e3; color: #000; }
+  .menubar svg { width: 16px; height: 16px; }
+  .num { color: var(--muted); font-size: 12px; font-variant-numeric: tabular-nums; letter-spacing: 0.04em; }
+  h2 { margin: 0; font-size: 17px; font-weight: 600; }
+  p { margin: 0; color: var(--muted); font-size: 14px; }
+  .note { margin-top: 40px; color: var(--muted); font-size: 14px; max-width: 760px; }
+  @media (max-width: 420px) { .stage svg.big { width: 120px; height: 120px; } }
+</style>
+</head>
+<body>
+<main>
+  <h1>QuickClaude icon proposals</h1>
+  <p class="lede">Twelve directions for the app icon, in the macOS rounded-square shape. Each card shows the full icon, the 32 px Finder/Spotlight size, and a one-colour version for the menu bar (dark and light). Tell me a number, or mix two.</p>
+  <div class="grid" id="grid"></div>
+  <p class="note">The menu bar currently uses the same default Tauri icon. Whichever you pick, I'd make the menu-bar version a one-colour template image, so macOS tints it correctly in light and dark menu bars.</p>
+</main>
+
+<!-- Shared shapes -->
+<svg width="0" height="0" style="position:absolute" aria-hidden="true">
+  <defs>
+    <path id="spark" d="M0-100 C8-30 30-8 100 0 C30 8 8 30 0 100 C-8 30 -30 8 -100 0 C-30 -8 -8 -30 0 -100Z"/>
+    <linearGradient id="g-dark" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#3a3a3f"/><stop offset="1" stop-color="#1b1b1e"/></linearGradient>
+    <linearGradient id="g-coral" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#f0956f"/><stop offset="1" stop-color="#c4573a"/></linearGradient>
+    <linearGradient id="g-cream" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#fbf7f0"/><stop offset="1" stop-color="#ece4d6"/></linearGradient>
+    <linearGradient id="g-night" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#26324d"/><stop offset="1" stop-color="#0e1424"/></linearGradient>
+    <linearGradient id="g-sun" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#ffb37a"/><stop offset=".55" stop-color="#e2704b"/><stop offset="1" stop-color="#9e3b5e"/></linearGradient>
+    <linearGradient id="g-key" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#ffffff"/><stop offset="1" stop-color="#dcd8d0"/></linearGradient>
+    <radialGradient id="g-glow" cx=".5" cy=".5" r=".5"><stop offset="0" stop-color="#ffd2b8" stop-opacity=".9"/><stop offset="1" stop-color="#d97757" stop-opacity="0"/></radialGradient>
+    <linearGradient id="g-glass" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#ffffff" stop-opacity=".95"/><stop offset="1" stop-color="#ffffff" stop-opacity=".75"/></linearGradient>
+  </defs>
+</svg>
+
+<script>
+// Each icon: background + artwork on a 1024 canvas; "mono" is the menu-bar glyph on 24.
+const SQ = (fill) => `<rect x="100" y="100" width="824" height="824" rx="185" fill="${fill}"/>`;
+const SPARK = (x, y, s, fill) => `<use href="#spark" transform="translate(${x} ${y}) scale(${s})" fill="${fill}"/>`;
+const MSPARK = (x, y, s) => `<use href="#spark" transform="translate(${x} ${y}) scale(${s})" fill="currentColor"/>`;
+
+const icons = [
+  {
+    name: "Spark",
+    why: "The app's own logo, large and calm: a coral four-point spark on charcoal. Closest to what you see in the panel.",
+    art: SQ("url(#g-dark)") + `<circle cx="512" cy="512" r="300" fill="url(#g-glow)" opacity=".35"/>` + SPARK(512, 512, 2.7, "url(#g-coral)"),
+    mono: MSPARK(12, 12, 0.105),
+  },
+  {
+    name: "Spotlight lens",
+    why: "A search lens with the spark inside: says 'Spotlight for Claude' at a glance.",
+    art: SQ("url(#g-cream)") +
+      `<circle cx="460" cy="460" r="210" fill="none" stroke="#2a2826" stroke-width="56"/>` +
+      `<line x1="612" y1="612" x2="770" y2="770" stroke="#2a2826" stroke-width="70" stroke-linecap="round"/>` +
+      SPARK(460, 460, 1.25, "#d97757"),
+    mono: `<circle cx="10.5" cy="10.5" r="6.2" fill="none" stroke="currentColor" stroke-width="2"/><line x1="15" y1="15" x2="20.5" y2="20.5" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"/>` + MSPARK(10.5, 10.5, 0.036),
+  },
+  {
+    name: "Option + Space",
+    why: "The hotkey itself as the icon: an ⌥ symbol over a space bar. Teaches the shortcut.",
+    art: SQ("url(#g-dark)") +
+      `<path d="M300 420 H420 L560 600 H724 M590 420 H724" fill="none" stroke="#f1efea" stroke-width="54" stroke-linecap="round" stroke-linejoin="round"/>` +
+      `<rect x="280" y="680" width="464" height="64" rx="32" fill="url(#g-coral)"/>`,
+    mono: `<path d="M4 8.5 H8.2 L13.2 15 H20 M15 8.5 H20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/><rect x="4" y="18" width="16" height="2.4" rx="1.2" fill="currentColor"/>`,
+  },
+  {
+    name: "Prompt",
+    why: "A terminal prompt whose cursor is the spark: Claude Code, one keystroke away.",
+    art: SQ("#141416") +
+      `<path d="M300 400 L440 512 L300 624" fill="none" stroke="#f1efea" stroke-width="60" stroke-linecap="round" stroke-linejoin="round"/>` +
+      SPARK(640, 600, 1.15, "url(#g-coral)"),
+    mono: `<path d="M4 7 L9 12 L4 17" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/>` + MSPARK(16, 15, 0.055),
+  },
+  {
+    name: "Floating panel",
+    why: "A mini version of the app: a translucent bar floating over a blurred desktop, spark on the left.",
+    art: SQ("url(#g-sun)") +
+      `<rect x="200" y="420" width="624" height="184" rx="46" fill="url(#g-glass)"/>` +
+      SPARK(300, 512, 0.62, "#d97757") +
+      `<rect x="380" y="494" width="230" height="36" rx="18" fill="#2a2826" opacity=".22"/>`,
+    mono: `<rect x="2.5" y="8" width="19" height="8" rx="2.2" fill="none" stroke="currentColor" stroke-width="1.8"/>` + MSPARK(6.6, 12, 0.03),
+  },
+  {
+    name: "Keycap",
+    why: "A single physical key with the spark printed on it: press it and Claude appears.",
+    art: SQ("#2a2a2e") +
+      `<rect x="240" y="270" width="544" height="520" rx="110" fill="#9e9a92"/>` +
+      `<rect x="240" y="240" width="544" height="500" rx="110" fill="url(#g-key)"/>` +
+      SPARK(512, 490, 1.5, "#d97757"),
+    mono: `<rect x="3.5" y="3.5" width="17" height="17" rx="4" fill="none" stroke="currentColor" stroke-width="1.8"/>` + MSPARK(12, 12, 0.055),
+  },
+  {
+    name: "Quick bubble",
+    why: "A chat bubble with a speed tail: asking, answered, back to work.",
+    art: SQ("url(#g-coral)") +
+      `<path d="M300 300 H724 A90 90 0 0 1 814 390 V600 A90 90 0 0 1 724 690 H470 L350 790 V690 H300 A90 90 0 0 1 210 600 V390 A90 90 0 0 1 300 300Z" fill="#fff7f1"/>` +
+      SPARK(512, 495, 1.05, "#d97757"),
+    mono: `<path d="M5 4 H19 A2 2 0 0 1 21 6 V14 A2 2 0 0 1 19 16 H10 L6 20 V16 H5 A2 2 0 0 1 3 14 V6 A2 2 0 0 1 5 4Z" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"/>` + MSPARK(12, 10, 0.035),
+  },
+  {
+    name: "Comet",
+    why: "The spark with a motion trail across a night sky: speed is the point of the app.",
+    art: SQ("url(#g-night)") +
+      `<path d="M230 760 L640 400" stroke="#d97757" stroke-width="22" stroke-linecap="round" opacity=".35"/>` +
+      `<path d="M300 770 L660 450" stroke="#f0956f" stroke-width="14" stroke-linecap="round" opacity=".5"/>` +
+      `<path d="M200 690 L600 350" stroke="#f0956f" stroke-width="10" stroke-linecap="round" opacity=".3"/>` +
+      `<circle cx="680" cy="370" r="150" fill="url(#g-glow)" opacity=".6"/>` +
+      SPARK(680, 370, 1.4, "#ffe2d1"),
+    mono: `<path d="M3 21 L12 12" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" opacity=".6"/><path d="M6.5 21.5 L13.5 14.5" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" opacity=".45"/>` + MSPARK(16, 8, 0.065),
+  },
+  {
+    name: "Q spark",
+    why: "A bold 'Q' for QuickClaude, its tail replaced by the spark. A lettermark that reads at 16 px.",
+    art: SQ("url(#g-cream)") +
+      `<circle cx="490" cy="490" r="230" fill="none" stroke="#2a2826" stroke-width="80"/>` +
+      SPARK(700, 700, 1.15, "#d97757"),
+    mono: `<circle cx="11" cy="11" r="6.5" fill="none" stroke="currentColor" stroke-width="2.4"/>` + MSPARK(18, 18, 0.05),
+  },
+  {
+    name: "Sunburst",
+    why: "Warm gradient orb with radiating rays: friendly and bright, stands out in the Dock.",
+    art: SQ("url(#g-sun)") +
+      Array.from({ length: 12 }, (_, i) => `<rect x="502" y="190" width="20" height="120" rx="10" fill="#fff" opacity=".55" transform="rotate(${i * 30} 512 512)"/>`).join("") +
+      `<circle cx="512" cy="512" r="150" fill="#fff6ee"/>` + SPARK(512, 512, 0.95, "#d97757"),
+    mono: Array.from({ length: 8 }, (_, i) => `<rect x="11.2" y="1.5" width="1.6" height="4" rx=".8" fill="currentColor" transform="rotate(${i * 45} 12 12)"/>`).join("") + `<circle cx="12" cy="12" r="5" fill="currentColor"/>`,
+  },
+  {
+    name: "Bolt",
+    why: "A lightning bolt cut out of a coral tile: the most direct way to say 'quick'.",
+    art: SQ("url(#g-coral)") +
+      `<path d="M560 190 L320 560 H500 L450 834 L710 440 H530 Z" fill="#fff7f1" stroke="#fff7f1" stroke-width="24" stroke-linejoin="round"/>`,
+    mono: `<path d="M13.5 2 L6 13 H11.5 L10 22 L18 10 H12.5 Z" fill="currentColor"/>`,
+  },
+  {
+    name: "Space bar glow",
+    why: "Minimal: one glowing coral bar under a small spark, like the space key lit up after ⌥.",
+    art: SQ("#101012") +
+      `<ellipse cx="512" cy="650" rx="300" ry="90" fill="url(#g-glow)" opacity=".7"/>` +
+      `<rect x="250" y="620" width="524" height="72" rx="36" fill="url(#g-coral)"/>` +
+      SPARK(512, 420, 1.05, "#f1efea"),
+    mono: `<rect x="3" y="16" width="18" height="3.2" rx="1.6" fill="currentColor"/>` + MSPARK(12, 8.5, 0.055),
+  },
+];
+
+const grid = document.getElementById("grid");
+icons.forEach((icon, i) => {
+  const big = `<svg class="big" viewBox="100 100 824 824" role="img" aria-label="${icon.name}">${icon.art}</svg>`;
+  const small = `<svg width="32" height="32" viewBox="100 100 824 824" aria-hidden="true">${icon.art}</svg>`;
+  const mono = (cls) => `<span class="menubar ${cls}"><svg viewBox="0 0 24 24" aria-hidden="true">${icon.mono}</svg><span style="font-size:12px">${cls === "light" ? "Wed 9:41" : "Wed 9:41"}</span></span>`;
+  const card = document.createElement("article");
+  card.className = "card";
+  card.innerHTML = `
+    <div class="stage">${big}<div class="smalls">${small}${mono("")}${mono("light")}</div></div>
+    <span class="num">${String(i + 1).padStart(2, "0")}</span>
+    <h2>${icon.name}</h2>
+    <p>${icon.why}</p>`;
+  grid.appendChild(card);
+});
+</script>
+</body>
+</html>
