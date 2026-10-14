@@ -13,9 +13,9 @@ Most of my questions for Claude are quick ones, but asking meant switching to a 
 - **⌥Space** shows or hides the panel.
 - **↩** asks a new question. **⌘↩** asks a follow-up and opens the chat view.
 - **Tab** switches the model, **⇧Tab** switches the effort. Your choice is remembered.
-- **↓** on an empty input browses your past Claude Code chats.
+- **↓** on an empty input browses your past Claude Code chats. Press **⌫** twice on one to delete it.
 - **⌘V** pastes an image into the question.
-- **⌘T** continues the conversation in a terminal.
+- **⌘T** continues the conversation in your terminal: as a new [herdr](https://herdr.dev) workspace if herdr is running, otherwise in a new Ghostty or Terminal window.
 - **Esc** steps back: closes a list, clears the input, then hides the panel.
 
 ## What you need
@@ -25,7 +25,7 @@ Most of my questions for Claude are quick ones, but asking meant switching to a 
 - [Node.js](https://nodejs.org)
 - [Bun](https://bun.sh)
 - [Rust](https://rustup.rs)
-- [Ghostty](https://ghostty.org) for the terminal hand-off (it falls back to Terminal.app)
+- Optional: [herdr](https://herdr.dev) or [Ghostty](https://ghostty.org) for the terminal hand-off (it falls back to Terminal.app)
 
 ## Develop
 

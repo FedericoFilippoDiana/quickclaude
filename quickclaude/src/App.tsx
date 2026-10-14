@@ -1,4 +1,4 @@
-import { createSignal, createMemo, For, Show, onMount, onCleanup, createEffect, type JSX } from "solid-js";
+import { createSignal, createMemo, For, Show, onMount, onCleanup, createEffect, on, type JSX } from "solid-js";
 import { createStore } from "solid-js/store";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
@@ -44,6 +44,7 @@ type AgentEvent =
       durationMs: number;
     }
   | { type: "history"; sessions: SessionRow[] }
+  | { type: "deleted"; id: string }
   | {
       type: "transcript";
       id: string;
@@ -51,6 +52,10 @@ type AgentEvent =
       messages: { role: "user" | "assistant"; text: string; images: number }[];
     }
   | { type: "handoff"; id: string }
+  | { type: "tasks"; turn: number; count: number }
+  | { type: "wake"; turn: number }
+  | { type: "activity"; ids: string[] }
+  | { type: "notify" }
   | { type: "error"; turn?: number; message: string };
 
 const send = (cmd: object) => invoke("agent_send", { line: JSON.stringify(cmd) });
@@ -143,6 +148,11 @@ export default function App() {
   const [chosen, setChosen] = createSignal(true);
   const [sessions, setSessions] = createSignal<SessionRow[] | null>(null);
   const [selected, setSelected] = createSignal(0);
+  // Background tasks of the open chat, and every chat with something running (history lamps).
+  const [tasks, setTasks] = createSignal(0);
+  const [active, setActive] = createSignal<Set<string>>(new Set());
+  // Busy, or waiting on background work that will reply by itself.
+  const working = () => busy() || tasks() > 0;
   let turn = 0;
   let stashedDraft = "";
   let input!: HTMLTextAreaElement;
@@ -196,19 +206,33 @@ export default function App() {
     const all = sessions() ?? [];
     return q ? all.filter((s) => s.title.toLowerCase().includes(q)) : all;
   });
+  // Deleting takes two presses: the first marks the row, the second deletes it from Claude Code.
+  const [armed, setArmed] = createSignal<string | null>(null);
+  // A new search starts at the top; a deletion keeps your place in the list.
+  createEffect(on(draft, () => overlay() === "history" && setSelected(0)));
   createEffect(() => {
-    filtered();
-    if (overlay() === "history") setSelected(0);
+    const n = filtered().length;
+    if (selected() >= n) setSelected(Math.max(n - 1, 0));
   });
+  createEffect(on([selected, draft, overlay], () => setArmed(null)));
   createEffect(() => {
     const i = selected();
     if (overlay() === "history") historyList?.children[i]?.scrollIntoView({ block: "nearest" });
   });
 
+  function deleteSelected() {
+    const row = filtered()[selected()];
+    if (!row) return;
+    if (armed() !== row.id) return setArmed(row.id);
+    setArmed(null);
+    send({ type: "delete", id: row.id });
+  }
+
   function showHistory() {
     stashedDraft = draft();
     setDraft("");
     setSessions(null);
+    setSelected(0);
     setOverlay("history");
     send({ type: "history" });
   }
@@ -231,6 +255,7 @@ export default function App() {
     setBusy(false);
     setNotice("");
     setSessionId(row.id);
+    setTasks(0);
     setMode("chat");
     send({ type: "open", id: row.id, turn });
   }
@@ -280,6 +305,33 @@ export default function App() {
       case "history":
         setSessions(ev.sessions);
         break;
+      case "tasks":
+        setTasks(ev.count);
+        break;
+      case "activity":
+        setActive(new Set(ev.ids));
+        break;
+      case "wake":
+        // Claude carries on by itself (a background task finished): continue its last answer.
+        flush();
+        if (lastAnswer()?.role === "assistant") {
+          if (lastAnswer().text) pending = "\n\n";
+          setMessages(last(), { status: "Working…", meta: undefined, error: undefined });
+        } else setMessages(messages.length, { role: "assistant", text: "", status: "Working…" });
+        setBusy(true);
+        break;
+      case "deleted":
+        setSessions((all) => all?.filter((s) => s.id !== ev.id) ?? null);
+        // The open chat was the one deleted: it no longer exists to follow up on.
+        if (sessionId() === ev.id) {
+          turn++;
+          setTasks(0);
+          setMessages([]);
+          setBusy(false);
+          setMode("compact");
+          setSessionId(null);
+        }
+        break;
       case "transcript":
         setMessages(
           ev.messages.map((m) => ({ role: m.role, text: m.text, imageCount: m.images || undefined })),
@@ -310,6 +362,7 @@ export default function App() {
     if (!followUp) {
       setMessages([]);
       setSessionId(null);
+      setTasks(0);
     }
     setMessages(messages.length, { role: "user", text, images: images.map((i) => i.url) });
     setMessages(messages.length, { role: "assistant", text: "", status: "Thinking…" });
@@ -331,6 +384,7 @@ export default function App() {
 
   function clear() {
     turn++;
+    setTasks(0);
     setMessages([]);
     setBusy(false);
     setMode("compact");
@@ -348,7 +402,7 @@ export default function App() {
   }
 
   function toTerminal() {
-    if (!sessionId() || busy()) return;
+    if (!sessionId() || working()) return;
     send({ type: "handoff" });
   }
 
@@ -376,7 +430,12 @@ export default function App() {
   function onKeyDown(e: KeyboardEvent) {
     if (overlay() !== "none") {
       const n = filtered().length;
+      const del = e.key === "Delete" || (e.key === "Backspace" && (e.metaKey || !draft()));
       if (e.key === "Tab") e.preventDefault();
+      else if (del) {
+        e.preventDefault();
+        deleteSelected();
+      }
       else if (e.key === "ArrowDown" || e.key === "ArrowUp") {
         e.preventDefault();
         if (n) setSelected((i) => (i + (e.key === "ArrowDown" ? 1 : n - 1)) % n);
@@ -403,16 +462,15 @@ export default function App() {
       e.preventDefault();
       showHistory();
     } else if (e.key === "Escape") {
-      // One step back per press: clear what's typed (and pasted), then collapse and hide.
+      // One step back per press: clear what's typed (and pasted), close the chat, then hide.
       e.preventDefault();
       if (draft() || attachments().length) {
         setDraft("");
         setAttachments([]);
         autosize();
-      } else {
-        if (mode() === "chat") setMode("compact");
-        win.hide();
-      }
+      } else if (mode() === "chat" && !working()) reset();
+      // Still working (or waiting on background work): hide and keep the chat for when you're back.
+      else win.hide();
     } else if (e.key === "Backspace" && !draft() && attachments().length) {
       e.preventDefault();
       setAttachments((a) => a.slice(0, -1));
@@ -462,15 +520,31 @@ export default function App() {
     if (mode() === "chat" && list) list.scrollTop = list.scrollHeight;
   });
 
+  // Selecting text in the chat moves focus off the input; the panel's keys should still work.
+  function onWindowKeyDown(e: KeyboardEvent) {
+    if (e.target === input) return;
+    const panelKey = e.key === "Escape" || e.key === "Tab" || (e.metaKey && ["t", "n", "."].includes(e.key));
+    if (!panelKey) return;
+    window.getSelection()?.removeAllRanges();
+    input.focus();
+    onKeyDown(e);
+  }
+
   onMount(() => {
+    window.addEventListener("keydown", onWindowKeyDown);
+    onCleanup(() => window.removeEventListener("keydown", onWindowKeyDown));
     const observer = new ResizeObserver(fit);
     observer.observe(panel);
     const unlisten = Promise.all([
       listen<string>("agent", (e) => onAgent(JSON.parse(e.payload))),
+      listen<string>("open-chat", (e) => {
+        if (sessionId() !== e.payload) openSession({ id: e.payload, title: "", at: 0 });
+        else setMode("chat");
+      }),
       listen("panel-shown", () => {
         if (overlay() !== "none") closeOverlay();
         // Like Spotlight, a finished one-off answer doesn't come back; running answers and chats do.
-        if (mode() === "compact" && !busy() && messages.length) reset();
+        if (mode() === "compact" && !working() && messages.length) reset();
         input.focus();
         input.select();
       }),
@@ -567,6 +641,20 @@ export default function App() {
     </div>
   );
 
+  // Claude ended its turn but left work running; it will reply by itself when that finishes.
+  const waiting = () => (
+    <Show when={!busy() && tasks() > 0}>
+      <div class="status">
+        <span class="lamp" />
+        <span>
+          {tasks() === 1
+            ? "Waiting on a background task; Claude will reply when it finishes."
+            : `Waiting on ${tasks()} background tasks; Claude will reply when they finish.`}
+        </span>
+      </div>
+    </Show>
+  );
+
   const footer = (hints: string[]): JSX.Element => (
     <div class="footer">
       <For each={hints}>{(h) => <span class="hint">{h}</span>}</For>
@@ -582,18 +670,21 @@ export default function App() {
             {(row, i) => (
               <button
                 class="row"
-                classList={{ selected: i() === selected() }}
+                classList={{ selected: i() === selected(), armed: armed() === row.id }}
                 onMouseMove={() => setSelected(i())}
                 onClick={() => openSession(row)}
               >
+                <Show when={active().has(row.id)}>
+                  <span class="lamp" title="Working" />
+                </Show>
                 <span class="title">{row.title}</span>
-                <span class="when">{ago(row.at)}</span>
+                <span class="when">{armed() === row.id ? "press ⌫ again to delete" : ago(row.at)}</span>
               </button>
             )}
           </For>
         </Show>
       </div>
-      {footer(["↑↓ choose", "↩ open", "esc back"])}
+      {footer(["↑↓ choose", "↩ open", "⌫ delete", "esc back"])}
     </>
   );
 
@@ -618,6 +709,7 @@ export default function App() {
                       {messages[last() - 1]?.text}
                     </div>
                     <AssistantBody msg={lastAnswer()} />
+                    {waiting()}
                   </div>
                 </Show>
                 <Show when={messages.length || notice()}>
@@ -628,7 +720,7 @@ export default function App() {
                       <button class="hint link" onClick={expand}>
                         ⌘↩ follow up
                       </button>
-                      <Show when={sessionId()}>
+                      <Show when={sessionId() && !working()}>
                         <button class="hint link" onClick={toTerminal}>
                           ⌘T terminal
                         </button>
@@ -644,7 +736,7 @@ export default function App() {
           <div class="chat-head">
             <span>Chat</span>
             <span class="actions">
-              <Show when={sessionId() && !busy()}>
+              <Show when={sessionId() && !working()}>
                 <button class="hint link" onClick={toTerminal}>
                   ⌘T terminal
                 </button>
@@ -664,6 +756,7 @@ export default function App() {
                 </div>
               )}
             </For>
+            {waiting()}
             <Show when={notice()}>
               <div class="error">{notice()}</div>
             </Show>

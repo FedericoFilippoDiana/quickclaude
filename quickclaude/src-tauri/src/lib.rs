@@ -6,6 +6,7 @@ use tauri::menu::{Menu, MenuItem};
 use tauri::tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent};
 use tauri::{AppHandle, Emitter, LogicalPosition, Manager, RunEvent, WebviewWindow, WindowEvent};
 use tauri_plugin_global_shortcut::{GlobalShortcutExt, ShortcutState};
+use tauri_plugin_notification::NotificationExt;
 
 /// Placeholder until you pick your own; override with QUICKCLAUDE_HOTKEY (e.g. "Super+Shift+Space").
 const DEFAULT_HOTKEY: &str = "Alt+Space";
@@ -27,6 +28,36 @@ fn agent_command() -> std::io::Result<Command> {
 struct Agent {
     child: Mutex<Option<Child>>,
     stdin: Mutex<Option<ChildStdin>>,
+    /// The chat of the latest notification, opened when you click it.
+    notified: Mutex<Option<String>>,
+}
+
+/// A reply that arrived on its own (a background task finished). Notify unless you're looking at it.
+fn notify(app: &AppHandle, line: &str) {
+    let Ok(msg) = serde_json::from_str::<serde_json::Value>(line) else {
+        return;
+    };
+    let on_screen = msg["current"].as_bool().unwrap_or(false) && panel(app).is_visible().unwrap_or(false);
+    if on_screen {
+        return;
+    }
+    let short = |s: &str, n: usize| {
+        let s = s.split_whitespace().collect::<Vec<_>>().join(" ");
+        if s.chars().count() > n {
+            format!("{}…", s.chars().take(n).collect::<String>())
+        } else {
+            s
+        }
+    };
+    let title = short(msg["title"].as_str().unwrap_or(""), 60);
+    let text = short(msg["text"].as_str().unwrap_or(""), 200);
+    *app.state::<Agent>().notified.lock().unwrap() = msg["id"].as_str().map(String::from);
+    let _ = app
+        .notification()
+        .builder()
+        .title(if title.is_empty() { "Claude".into() } else { format!("Claude · {title}") })
+        .body(if text.is_empty() { "Finished.".into() } else { text })
+        .show();
 }
 
 fn spawn_agent(app: &AppHandle) {
@@ -56,6 +87,9 @@ fn spawn_agent(app: &AppHandle) {
     let app = app.clone();
     std::thread::spawn(move || {
         for line in BufReader::new(stdout).lines().map_while(Result::ok) {
+            if line.starts_with(r#"{"type":"notify""#) {
+                notify(&app, &line);
+            }
             let _ = app.emit("agent", line);
         }
         // The sidecar exited: tell the UI and bring it back, unless we are quitting.
@@ -123,6 +157,7 @@ pub fn run() {
 
     let app = tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
+        .plugin(tauri_plugin_notification::init())
         .plugin(
             tauri_plugin_global_shortcut::Builder::new()
                 .with_handler(|app, _shortcut, event| {
@@ -166,6 +201,17 @@ pub fn run() {
                     }
                 })
                 .build(app)?;
+
+            // Clicking a notification opens its chat.
+            let handle = app.handle().clone();
+            app.notification().on_action(move |_| {
+                let id = handle.state::<Agent>().notified.lock().unwrap().clone();
+                // Switch to the chat first, so showing the panel doesn't clear it as a finished answer.
+                if let Some(id) = id {
+                    let _ = panel(&handle).emit("open-chat", id);
+                }
+                show_panel(&handle);
+            })?;
 
             spawn_agent(app.handle());
             Ok(())

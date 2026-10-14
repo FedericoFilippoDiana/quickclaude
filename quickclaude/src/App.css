@@ -281,6 +281,10 @@ textarea::placeholder {
   font-variant-numeric: tabular-nums;
 }
 
+.row.armed .when {
+  color: var(--error);
+}
+
 .pad {
   padding: 10px 12px;
 }
@@ -483,4 +487,27 @@ textarea::placeholder {
 ::-webkit-scrollbar-thumb {
   background: var(--faint);
   border-radius: 4px;
+}
+
+/* --- activity lamp: a chat with a turn or background task running --- */
+
+.lamp {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: #4cd964;
+  box-shadow: 0 0 6px rgba(76, 217, 100, 0.7);
+  flex-shrink: 0;
+  animation: lamp-pulse 1.6s ease-in-out infinite;
+}
+
+.row .lamp {
+  align-self: center;
+  margin-right: -4px;
+}
+
+@keyframes lamp-pulse {
+  50% {
+    opacity: 0.45;
+  }
 }
