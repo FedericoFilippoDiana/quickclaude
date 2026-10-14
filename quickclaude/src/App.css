@@ -267,6 +267,14 @@ textarea::placeholder {
   background: rgba(255, 255, 255, 0.08);
 }
 
+.row.picked {
+  background: rgba(217, 119, 87, 0.18);
+}
+
+.row.picked.selected {
+  background: rgba(217, 119, 87, 0.26);
+}
+
 .row .title {
   flex: 1;
   white-space: nowrap;

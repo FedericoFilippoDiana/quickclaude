@@ -69,6 +69,10 @@ Use Markdown when it aids reading (code blocks, short lists, tables).
 Use web search only when the question needs current or niche facts.
 Today's date is ${new Date().toDateString()}.`;
 
+// QuickClaude's own folder: its chats, history and any files Claude makes stay here, apart from ~.
+const WORK_DIR = process.env.QUICKCLAUDE_DIR || join(HOME, "QuickClaude");
+mkdirSync(WORK_DIR, { recursive: true });
+
 const LEAN_DIR = join(HOME, ".quickclaude");
 mkdirSync(LEAN_DIR, { recursive: true });
 
@@ -82,10 +86,10 @@ const OPTIONS =
         allowedTools: ["WebSearch", "WebFetch"],
       }
     : {
-        // Same as running `claude` in your home folder: your CLAUDE.md, settings,
+        // Same as running `claude` in ~/QuickClaude: your CLAUDE.md, settings,
         // MCP servers, skills, Claude Code's own system prompt and full tool set.
         // Permissions mirror your settings (bypassPermissions), so nothing is asked.
-        cwd: HOME,
+        cwd: WORK_DIR,
         settingSources: ["user", "project", "local"],
         systemPrompt: { type: "preset", preset: "claude_code" },
         tools: { type: "preset", preset: "claude_code" },
@@ -357,7 +361,7 @@ const titles = new Map();
 
 async function history() {
   try {
-    const sessions = await listSessions({ dir: HOME, includeWorktrees: false });
+    const sessions = await listSessions({ dir: WORK_DIR, includeWorktrees: false });
     const rows = sessions
       .sort((a, b) => b.lastModified - a.lastModified)
       .slice(0, 300)
@@ -381,7 +385,7 @@ async function remove(id) {
   }
   for (const s of live) if (s.id === id) closeSession(s);
   try {
-    await deleteSession(id, { dir: HOME });
+    await deleteSession(id, { dir: WORK_DIR });
     titles.delete(id);
     emit({ type: "deleted", id });
   } catch (e) {
@@ -417,7 +421,7 @@ async function open({ id, turn }) {
   if (current?.id === id) current = null; // reopening the chat on screen: reuse it below
   else retire(current);
   try {
-    const messages = await getSessionMessages(id, { dir: HOME });
+    const messages = await getSessionMessages(id, { dir: WORK_DIR });
     if (mine !== seq) return;
     emit({ type: "transcript", id, turn, messages: toChat(messages) });
     // Still running off screen: bring that process back instead of starting a second one.
@@ -451,13 +455,13 @@ const run = (file, args) =>
     execFile(file, args, { timeout: 5000 }, (err, stdout) => (err ? reject(err) : resolve(stdout))),
   );
 
-// A new herdr workspace in your home folder, named after the chat, with claude typed into its shell.
+// A new herdr workspace in QuickClaude's folder, named after the chat, with claude typed into its shell.
 // Returns false when herdr isn't installed or running, so the caller can open a plain terminal.
 async function openInHerdr(command, title) {
   if (!HERDR) return false;
   try {
     const label = (title || "claude").replace(/\s+/g, " ").trim().slice(0, 40);
-    const out = JSON.parse(await run(HERDR, ["workspace", "create", "--cwd", HOME, "--label", label, "--focus"]));
+    const out = JSON.parse(await run(HERDR, ["workspace", "create", "--cwd", WORK_DIR, "--label", label, "--focus"]));
     const pane = out.result.root_pane.pane_id;
     await run(HERDR, ["pane", "run", pane, command]);
     // Bring the terminal that hosts herdr to the front.
@@ -473,12 +477,12 @@ function openTerminal(command) {
   // Run claude in a login shell, then leave you in that shell when it exits.
   const script = `${command}; exec ${shell} -l`;
   if (existsSync("/Applications/Ghostty.app")) {
-    spawn("open", ["-na", "Ghostty.app", "--args", `--working-directory=${HOME}`, "-e", shell, "-lc", script], {
+    spawn("open", ["-na", "Ghostty.app", "--args", `--working-directory=${WORK_DIR}`, "-e", shell, "-lc", script], {
       detached: true,
       stdio: "ignore",
     }).unref();
   } else {
-    const cmd = `cd ${shellQuote(HOME)} && ${script}`;
+    const cmd = `cd ${shellQuote(WORK_DIR)} && ${script}`;
     const as = `tell application "Terminal" to do script ${JSON.stringify(cmd)}\ntell application "Terminal" to activate`;
     spawn("osascript", ["-e", as], { detached: true, stdio: "ignore" }).unref();
   }

@@ -206,26 +206,73 @@ export default function App() {
     const all = sessions() ?? [];
     return q ? all.filter((s) => s.title.toLowerCase().includes(q)) : all;
   });
-  // Deleting takes two presses: the first marks the row, the second deletes it from Claude Code.
-  const [armed, setArmed] = createSignal<string | null>(null);
+  // Chats picked with ⇧↑↓, ⇧click, ⌘click or ⌘A; empty means just the row under the cursor.
+  const [picked, setPicked] = createSignal<Set<string>>(new Set());
+  let anchor = 0; // where a ⇧ range starts
+  const targets = () => {
+    const p = picked();
+    return p.size ? filtered().filter((r) => p.has(r.id)) : filtered().slice(selected(), selected() + 1);
+  };
+  const isTarget = (id: string) => (picked().size ? picked().has(id) : filtered()[selected()]?.id === id);
+  // Deleting takes two presses: the first marks the rows, the second deletes them from Claude Code.
+  const [armed, setArmed] = createSignal(false);
   // A new search starts at the top; a deletion keeps your place in the list.
-  createEffect(on(draft, () => overlay() === "history" && setSelected(0)));
+  createEffect(
+    on(draft, () => {
+      if (overlay() !== "history") return;
+      setSelected(0);
+      setPicked(new Set<string>());
+    }),
+  );
   createEffect(() => {
     const n = filtered().length;
     if (selected() >= n) setSelected(Math.max(n - 1, 0));
   });
-  createEffect(on([selected, draft, overlay], () => setArmed(null)));
+  createEffect(on([selected, picked, draft, overlay], () => setArmed(false)));
+
+  function pickRange(to: number) {
+    const [a, b] = [Math.min(anchor, to), Math.max(anchor, to)];
+    setPicked(new Set(filtered().slice(a, b + 1).map((r) => r.id)));
+  }
+
+  function moveCursor(step: number, extend: boolean) {
+    const n = filtered().length;
+    if (!n) return;
+    if (extend && !picked().size) anchor = selected();
+    const to = extend ? Math.min(Math.max(selected() + step, 0), n - 1) : (selected() + step + n) % n;
+    setSelected(to);
+    if (extend) pickRange(to);
+    else setPicked(new Set<string>());
+  }
+
+  function onRowClick(e: MouseEvent, i: number, row: SessionRow) {
+    if (e.shiftKey) {
+      if (!picked().size) anchor = selected();
+      setSelected(i);
+      pickRange(i);
+    } else if (e.metaKey) {
+      const p = new Set(picked().size ? picked() : [filtered()[selected()]?.id].filter(Boolean) as string[]);
+      if (p.has(row.id)) p.delete(row.id);
+      else p.add(row.id);
+      setPicked(p);
+      setSelected(i);
+      anchor = i;
+    } else openSession(row);
+  }
   createEffect(() => {
     const i = selected();
     if (overlay() === "history") historyList?.children[i]?.scrollIntoView({ block: "nearest" });
   });
 
   function deleteSelected() {
-    const row = filtered()[selected()];
-    if (!row) return;
-    if (armed() !== row.id) return setArmed(row.id);
-    setArmed(null);
-    send({ type: "delete", id: row.id });
+    const rows = targets();
+    if (!rows.length) return;
+    if (!armed()) return setArmed(true);
+    setArmed(false);
+    setPicked(new Set<string>());
+    // Land on the chat that follows the first deleted one.
+    setSelected(filtered().indexOf(rows[0]));
+    for (const row of rows) send({ type: "delete", id: row.id });
   }
 
   function showHistory() {
@@ -429,7 +476,6 @@ export default function App() {
 
   function onKeyDown(e: KeyboardEvent) {
     if (overlay() !== "none") {
-      const n = filtered().length;
       const del = e.key === "Delete" || (e.key === "Backspace" && (e.metaKey || !draft()));
       if (e.key === "Tab") e.preventDefault();
       else if (del) {
@@ -438,13 +484,18 @@ export default function App() {
       }
       else if (e.key === "ArrowDown" || e.key === "ArrowUp") {
         e.preventDefault();
-        if (n) setSelected((i) => (i + (e.key === "ArrowDown" ? 1 : n - 1)) % n);
+        moveCursor(e.key === "ArrowDown" ? 1 : -1, e.shiftKey);
+      } else if (e.metaKey && e.key === "a") {
+        e.preventDefault();
+        setPicked(new Set(filtered().map((r) => r.id)));
       } else if (e.key === "Enter") {
         e.preventDefault();
         openSession(filtered()[selected()]);
       } else if (e.key === "Escape") {
         e.preventDefault();
-        closeOverlay();
+        // First drop a multi-selection, then leave the list.
+        if (picked().size) setPicked(new Set<string>());
+        else closeOverlay();
       }
       return;
     }
@@ -468,9 +519,11 @@ export default function App() {
         setDraft("");
         setAttachments([]);
         autosize();
-      } else if (mode() === "chat" && !working()) reset();
-      // Still working (or waiting on background work): hide and keep the chat for when you're back.
-      else win.hide();
+      } else if (mode() === "chat") {
+        // Back to an empty input. A chat that's still working keeps running in the background
+        // (green lamp in history, notification when it replies).
+        reset();
+      } else win.hide();
     } else if (e.key === "Backspace" && !draft() && attachments().length) {
       e.preventDefault();
       setAttachments((a) => a.slice(0, -1));
@@ -670,21 +723,37 @@ export default function App() {
             {(row, i) => (
               <button
                 class="row"
-                classList={{ selected: i() === selected(), armed: armed() === row.id }}
-                onMouseMove={() => setSelected(i())}
-                onClick={() => openSession(row)}
+                classList={{
+                  selected: i() === selected(),
+                  picked: picked().has(row.id),
+                  armed: armed() && isTarget(row.id),
+                }}
+                onMouseMove={() => !picked().size && setSelected(i())}
+                onClick={(e) => onRowClick(e, i(), row)}
               >
                 <Show when={active().has(row.id)}>
                   <span class="lamp" title="Working" />
                 </Show>
                 <span class="title">{row.title}</span>
-                <span class="when">{armed() === row.id ? "press ⌫ again to delete" : ago(row.at)}</span>
+                <span class="when">
+                  {!(armed() && isTarget(row.id))
+                    ? ago(row.at)
+                    : targets()[0]?.id !== row.id
+                      ? "delete"
+                      : targets().length > 1
+                        ? `press ⌫ again to delete ${targets().length} chats`
+                        : "press ⌫ again to delete"}
+                </span>
               </button>
             )}
           </For>
         </Show>
       </div>
-      {footer(["↑↓ choose", "↩ open", "⌫ delete", "esc back"])}
+      {footer(
+        picked().size > 1
+          ? [`${picked().size} selected`, "⌫ delete", "esc back"]
+          : ["↑↓ choose", "⇧ select more", "↩ open", "⌫ delete", "esc back"],
+      )}
     </>
   );
 
