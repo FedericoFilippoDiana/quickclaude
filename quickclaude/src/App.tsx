@@ -130,10 +130,17 @@ function UserBody(props: { msg: Msg }) {
 }
 
 type Overlay = "none" | "history" | "prefs";
-type Prefs = { bringForward: boolean; sound: boolean; notification: boolean };
+type Theme = "system" | "light" | "dark";
+type Prefs = { bringForward: boolean; sound: boolean; notification: boolean; theme: Theme };
+type Toggle = Exclude<keyof Prefs, "theme">;
+const THEMES: { value: Theme; label: string }[] = [
+  { value: "system", label: "System" },
+  { value: "light", label: "Light" },
+  { value: "dark", label: "Dark" },
+];
 
 // The settings in ⌘, (stored by the shell), in display order.
-const PREF_ROWS: { key: keyof Prefs; title: string; detail: string }[] = [
+const PREF_ROWS: { key: Toggle; title: string; detail: string }[] = [
   {
     key: "bringForward",
     title: "Bring QuickClaude forward",
@@ -303,22 +310,37 @@ export default function App() {
     setOverlay("prefs");
     setPrefs(await invoke<Prefs>("get_prefs"));
   }
-  function togglePref(key: keyof Prefs) {
+  function savePrefs(next: Prefs) {
+    setPrefs(next);
+    invoke("set_prefs", { new: next }).catch((e) => setNotice(`Couldn't save preferences: ${e}`));
+  }
+  function togglePref(key: Toggle) {
     const p = prefs();
     if (!p) return;
     const next = { ...p, [key]: !p[key] };
-    setPrefs(next);
-    invoke("set_prefs", { new: next }).catch((e) => setNotice(`Couldn't save preferences: ${e}`));
+    savePrefs(next);
     if (key === "sound" && next.sound) invoke("preview_sound");
   }
+  // The theme row sits after the switches; step moves through System, Light, Dark.
+  const themeRow = PREF_ROWS.length;
+  function stepTheme(step: number) {
+    const p = prefs();
+    if (!p) return;
+    const i = THEMES.findIndex((t) => t.value === p.theme);
+    savePrefs({ ...p, theme: THEMES[(Math.max(i, 0) + step + THEMES.length) % THEMES.length].value });
+  }
   function onPrefsKey(e: KeyboardEvent) {
-    const n = PREF_ROWS.length;
+    const n = PREF_ROWS.length + 1;
     if (e.key === "ArrowDown" || e.key === "ArrowUp") {
       e.preventDefault();
       setPrefRow((i) => (i + (e.key === "ArrowDown" ? 1 : n - 1)) % n);
+    } else if (prefRow() === themeRow && (e.key === "ArrowLeft" || e.key === "ArrowRight")) {
+      e.preventDefault();
+      stepTheme(e.key === "ArrowRight" ? 1 : -1);
     } else if (e.key === " " || e.key === "Enter") {
       e.preventDefault();
-      togglePref(PREF_ROWS[prefRow()].key);
+      if (prefRow() === themeRow) stepTheme(1);
+      else togglePref(PREF_ROWS[prefRow()].key);
     } else if (e.key === "Escape") {
       e.preventDefault();
       setOverlay("none");
@@ -591,7 +613,7 @@ export default function App() {
 
   function autosize() {
     input.style.height = "auto";
-    input.style.height = `${Math.min(input.scrollHeight, 160)}px`;
+    input.style.height = `${Math.min(input.scrollHeight, 240)}px`;
   }
 
   // --- window sizing: compact hugs its content; chat and history are a fixed tall panel ---
@@ -670,6 +692,14 @@ export default function App() {
     send({ type: "hello" });
     input.focus();
   });
+
+  // Drag the panel by any spot that isn't a control or selectable text; it reopens where it's left.
+  function onMouseDown(e: MouseEvent) {
+    if (e.button !== 0) return;
+    if ((e.target as HTMLElement).closest("button, a, textarea, input, .pref, .answer, .list")) return;
+    e.preventDefault();
+    win.startDragging();
+  }
 
   // Open links in the default browser instead of inside the panel.
   function onClick(e: MouseEvent) {
@@ -797,11 +827,38 @@ export default function App() {
             </button>
           )}
         </For>
+        <div
+          class="pref"
+          classList={{ selected: prefRow() === themeRow }}
+          onMouseMove={() => setPrefRow(themeRow)}
+        >
+          <span class="pref-text">
+            <span class="pref-title">Theme</span>
+            <span class="pref-detail">System follows your Mac's light or dark appearance.</span>
+          </span>
+          <span class="segments" role="radiogroup">
+            <For each={THEMES}>
+              {(t) => (
+                <span
+                  role="radio"
+                  aria-checked={prefs()?.theme === t.value}
+                  classList={{ on: prefs()?.theme === t.value }}
+                  onClick={() => {
+                    const p = prefs();
+                    if (p) savePrefs({ ...p, theme: t.value });
+                  }}
+                >
+                  {t.label}
+                </span>
+              )}
+            </For>
+          </span>
+        </div>
       </div>
       <div class="prefs-foot">
         <span>⌥Space opens QuickClaude · chats live in ~/QuickClaude</span>
         <span class="hint">↑↓ choose</span>
-        <span class="hint">space toggle</span>
+        <span class="hint">space toggle · ←→ theme</span>
         <span class="hint">esc close</span>
       </div>
     </>
@@ -856,6 +913,7 @@ export default function App() {
       class="panel"
       classList={{ tall: tall(), chat: mode() === "chat" && overlay() === "none" }}
       onClick={onClick}
+      onMouseDown={onMouseDown}
     >
       <Show when={overlay() !== "prefs"} fallback={prefsView}>
       <Show when={overlay() !== "history"} fallback={historyView}>

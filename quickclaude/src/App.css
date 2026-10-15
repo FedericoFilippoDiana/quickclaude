@@ -6,9 +6,34 @@
   --accent: #d97757;
   --error: #ff8a80;
   --code-bg: rgba(0, 0, 0, 0.3);
-  font: 14px/1.55 -apple-system, BlinkMacSystemFont, "SF Pro Text", system-ui, sans-serif;
+  --bg: rgba(22, 22, 24, 0.82);
+  --hover: rgba(255, 255, 255, 0.08);
+  --hover-soft: rgba(255, 255, 255, 0.06);
+  --dot: rgba(255, 255, 255, 0.25);
+  --hint: rgba(255, 255, 255, 0.33);
+  --switch-off: rgba(255, 255, 255, 0.16);
+  font: 450 21px/1.55 -apple-system, BlinkMacSystemFont, "SF Pro Text", system-ui, sans-serif;
   color: var(--text);
   -webkit-font-smoothing: antialiased;
+}
+
+/* Light theme: the shell sets the window's appearance (Preferences → Theme), which drives this query. */
+@media (prefers-color-scheme: light) {
+  :root {
+    --text: rgba(0, 0, 0, 0.86);
+    --muted: rgba(0, 0, 0, 0.5);
+    --faint: rgba(0, 0, 0, 0.06);
+    --line: rgba(0, 0, 0, 0.1);
+    --accent: #c4613f;
+    --error: #c62828;
+    --code-bg: rgba(0, 0, 0, 0.06);
+    --bg: rgba(248, 248, 250, 0.85);
+    --hover: rgba(0, 0, 0, 0.06);
+    --hover-soft: rgba(0, 0, 0, 0.045);
+    --dot: rgba(0, 0, 0, 0.2);
+    --hint: rgba(0, 0, 0, 0.35);
+    --switch-off: rgba(0, 0, 0, 0.15);
+  }
 }
 
 * {
@@ -17,7 +42,7 @@
 
 html {
   /* Dark tint over the native blur so text stays readable on bright backgrounds. */
-  background: rgba(22, 22, 24, 0.82);
+  background: var(--bg);
   border-radius: 14px;
   height: 100%;
 }
@@ -85,16 +110,16 @@ textarea {
   outline: 0;
   background: transparent;
   color: var(--text);
-  font: 22px/28px -apple-system, BlinkMacSystemFont, "SF Pro Display", system-ui, sans-serif;
-  font-weight: 300;
+  font: 33px/42px -apple-system, BlinkMacSystemFont, "SF Pro Display", system-ui, sans-serif;
+  font-weight: 400;
   padding: 0;
-  max-height: 160px;
+  max-height: 240px;
   caret-color: var(--accent);
 }
 
 .chat textarea {
-  font-size: 16px;
-  line-height: 24px;
+  font-size: 24px;
+  line-height: 36px;
 }
 
 textarea::placeholder {
@@ -102,11 +127,11 @@ textarea::placeholder {
 }
 
 .stop {
-  width: 26px;
-  height: 26px;
+  width: 39px;
+  height: 39px;
   border-radius: 50%;
   background: var(--faint);
-  font-size: 10px;
+  font-size: 15px;
   color: var(--muted);
   flex-shrink: 0;
 }
@@ -119,7 +144,7 @@ textarea::placeholder {
 
 .model-label {
   margin-top: 5px;
-  font-size: 12px;
+  font-size: 18px;
   color: var(--muted);
   white-space: nowrap;
   flex-shrink: 0;
@@ -170,7 +195,7 @@ textarea::placeholder {
   width: 4px;
   height: 4px;
   border-radius: 50%;
-  background: rgba(255, 255, 255, 0.25);
+  background: var(--dot);
 }
 
 .model-label .dots i.on {
@@ -178,7 +203,7 @@ textarea::placeholder {
 }
 
 .model-label .first-hint {
-  color: rgba(255, 255, 255, 0.3);
+  color: var(--hint);
   margin-right: 8px;
 }
 
@@ -210,13 +235,13 @@ textarea::placeholder {
   position: absolute;
   top: 2px;
   right: 2px;
-  width: 16px;
-  height: 16px;
+  width: 24px;
+  height: 24px;
   border-radius: 50%;
   background: rgba(0, 0, 0, 0.6);
   color: #fff;
-  font-size: 12px;
-  line-height: 16px;
+  font-size: 18px;
+  line-height: 24px;
   opacity: 0;
 }
 
@@ -239,7 +264,7 @@ textarea::placeholder {
 }
 
 .image-count {
-  font-size: 12px;
+  font-size: 18px;
   color: var(--muted);
   margin-bottom: 4px;
 }
@@ -264,7 +289,7 @@ textarea::placeholder {
 }
 
 .row.selected {
-  background: rgba(255, 255, 255, 0.08);
+  background: var(--hover);
 }
 
 .row.picked {
@@ -283,7 +308,7 @@ textarea::placeholder {
 }
 
 .row .when {
-  font-size: 12px;
+  font-size: 18px;
   color: var(--muted);
   flex-shrink: 0;
   font-variant-numeric: tabular-nums;
@@ -310,7 +335,7 @@ textarea::placeholder {
 
 .question {
   color: var(--muted);
-  font-size: 12px;
+  font-size: 18px;
   margin-bottom: 6px;
   white-space: nowrap;
   overflow: hidden;
@@ -322,7 +347,7 @@ textarea::placeholder {
   align-items: center;
   gap: 14px;
   padding: 8px 20px 10px 54px;
-  font-size: 12px;
+  font-size: 18px;
   color: var(--muted);
   min-height: 36px;
 }
@@ -348,19 +373,14 @@ textarea::placeholder {
   justify-content: space-between;
   align-items: center;
   padding: 10px 20px;
-  font-size: 12px;
+  font-size: 18px;
   color: var(--muted);
   border-bottom: 1px solid var(--line);
-  -webkit-app-region: drag;
 }
 
 .chat-head .actions {
   display: flex;
   gap: 14px;
-}
-
-.chat-head button {
-  -webkit-app-region: no-drag;
 }
 
 .list {
@@ -443,7 +463,7 @@ textarea::placeholder {
 .md h1,
 .md h2,
 .md h3 {
-  font-size: 15px;
+  font-size: 22.5px;
   margin: 14px 0 6px;
 }
 
@@ -452,7 +472,7 @@ textarea::placeholder {
 }
 
 .md code {
-  font: 12.5px/1.5 ui-monospace, "SF Mono", Menlo, monospace;
+  font: 18.75px/1.5 ui-monospace, "SF Mono", Menlo, monospace;
   background: var(--code-bg);
   padding: 1px 5px;
   border-radius: 4px;
@@ -472,7 +492,7 @@ textarea::placeholder {
 
 .md table {
   border-collapse: collapse;
-  font-size: 13px;
+  font-size: 19.5px;
 }
 
 .md th,
@@ -524,11 +544,10 @@ textarea::placeholder {
 
 .prefs-head {
   padding: 16px 20px 6px;
-  font-size: 13px;
+  font-size: 19.5px;
   font-weight: 600;
   color: var(--muted);
   letter-spacing: 0.02em;
-  -webkit-app-region: drag;
 }
 
 .prefs {
@@ -546,7 +565,7 @@ textarea::placeholder {
 }
 
 .pref.selected {
-  background: rgba(255, 255, 255, 0.06);
+  background: var(--hover-soft);
 }
 
 .pref-text {
@@ -558,12 +577,12 @@ textarea::placeholder {
 }
 
 .pref-title {
-  font-size: 15px;
+  font-size: 22.5px;
   color: var(--text);
 }
 
 .pref-detail {
-  font-size: 12.5px;
+  font-size: 18.75px;
   color: var(--muted);
 }
 
@@ -572,7 +591,7 @@ textarea::placeholder {
   width: 38px;
   height: 22px;
   border-radius: 11px;
-  background: rgba(255, 255, 255, 0.16);
+  background: var(--switch-off);
   flex-shrink: 0;
   transition: background 0.18s ease;
 }
@@ -602,10 +621,31 @@ textarea::placeholder {
   align-items: center;
   gap: 14px;
   padding: 10px 20px 14px;
-  font-size: 12px;
-  color: rgba(255, 255, 255, 0.35);
+  font-size: 18px;
+  color: var(--hint);
 }
 
 .prefs-foot span:first-child {
   margin-right: auto;
+}
+
+/* Theme picker: a three-way segmented control in Preferences. */
+.segments {
+  display: flex;
+  padding: 2px;
+  border-radius: 8px;
+  background: var(--switch-off);
+  flex-shrink: 0;
+}
+
+.segments span {
+  padding: 3px 12px;
+  border-radius: 6px;
+  font-size: 18px;
+  color: var(--muted);
+}
+
+.segments span.on {
+  background: var(--accent);
+  color: #fff;
 }

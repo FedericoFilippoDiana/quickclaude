@@ -6,7 +6,7 @@ use tauri::menu::{Menu, MenuItem};
 use tauri::tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent};
 use serde::{Deserialize, Serialize};
 use tauri::path::BaseDirectory;
-use tauri::{AppHandle, Emitter, LogicalPosition, Manager, RunEvent, WebviewWindow, WindowEvent};
+use tauri::{AppHandle, Emitter, LogicalPosition, Manager, PhysicalPosition, RunEvent, Theme, WebviewWindow, WindowEvent};
 use tauri_plugin_global_shortcut::{GlobalShortcutExt, ShortcutState};
 use tauri_plugin_notification::NotificationExt;
 
@@ -36,11 +36,13 @@ struct Prefs {
     sound: bool,
     /// Show a macOS notification when a chat finishes while you're away.
     notification: bool,
+    /// "system", "light" or "dark".
+    theme: String,
 }
 
 impl Default for Prefs {
     fn default() -> Self {
-        Self { bring_forward: false, sound: true, notification: true }
+        Self { bring_forward: false, sound: true, notification: true, theme: "system".into() }
     }
 }
 
@@ -56,18 +58,28 @@ fn load_prefs() -> Prefs {
         .unwrap_or_default()
 }
 
+/// Light or dark window appearance; "system" follows macOS. The page's colour scheme follows it.
+fn apply_theme(window: &WebviewWindow, theme: &str) {
+    let _ = window.set_theme(match theme {
+        "light" => Some(Theme::Light),
+        "dark" => Some(Theme::Dark),
+        _ => None,
+    });
+}
+
 #[tauri::command]
 fn get_prefs(prefs: tauri::State<Mutex<Prefs>>) -> Prefs {
     prefs.lock().unwrap().clone()
 }
 
 #[tauri::command]
-fn set_prefs(new: Prefs, prefs: tauri::State<Mutex<Prefs>>) -> Result<(), String> {
+fn set_prefs(app: AppHandle, new: Prefs, prefs: tauri::State<Mutex<Prefs>>) -> Result<(), String> {
     let path = prefs_path().ok_or("no home folder")?;
     if let Some(dir) = path.parent() {
         std::fs::create_dir_all(dir).map_err(|e| e.to_string())?;
     }
     std::fs::write(&path, serde_json::to_string_pretty(&new).unwrap()).map_err(|e| e.to_string())?;
+    apply_theme(&panel(&app), &new.theme);
     *prefs.lock().unwrap() = new;
     Ok(())
 }
@@ -195,10 +207,34 @@ fn panel(app: &AppHandle) -> WebviewWindow {
     app.get_webview_window("main").expect("main window")
 }
 
+/// Where the panel goes. Until it's dragged, each show recentres it on the current screen;
+/// after a drag it reopens where it was left (until the app restarts).
+#[derive(Default)]
+struct Placement {
+    /// The position we last set ourselves, so our own moves aren't mistaken for a drag.
+    ours: Mutex<Option<PhysicalPosition<i32>>>,
+    dragged: Mutex<Option<PhysicalPosition<i32>>>,
+}
+
+fn on_moved(app: &AppHandle, pos: PhysicalPosition<i32>) {
+    let placement = app.state::<Placement>();
+    let ours = *placement.ours.lock().unwrap();
+    let near = |p: PhysicalPosition<i32>| (p.x - pos.x).abs() <= 2 && (p.y - pos.y).abs() <= 2;
+    if !ours.is_some_and(near) {
+        *placement.dragged.lock().unwrap() = Some(pos);
+    }
+}
+
 fn show_panel(app: &AppHandle) {
     let window = panel(app);
+    let placement = app.state::<Placement>();
+    let dragged = *placement.dragged.lock().unwrap();
+    if let Some(pos) = dragged {
+        *placement.ours.lock().unwrap() = Some(pos);
+        let _ = window.set_position(pos);
+    }
     // Spotlight-style placement: horizontally centred, a fifth of the way down.
-    if let Ok(Some(monitor)) = window
+    else if let Ok(Some(monitor)) = window
         .current_monitor()
         .or_else(|_| window.primary_monitor())
     {
@@ -209,10 +245,9 @@ fn show_panel(app: &AppHandle) {
             .outer_size()
             .map(|s| s.to_logical::<f64>(scale).width)
             .unwrap_or(720.0);
-        let _ = window.set_position(LogicalPosition::new(
-            pos.x + (size.width - width) / 2.0,
-            pos.y + size.height * 0.2,
-        ));
+        let at = LogicalPosition::new(pos.x + (size.width - width) / 2.0, pos.y + size.height * 0.2);
+        *placement.ours.lock().unwrap() = Some(at.to_physical(scale));
+        let _ = window.set_position(at);
     }
     let _ = window.show();
     let _ = window.set_focus();
@@ -245,12 +280,15 @@ pub fn run() {
                 .build(),
         )
         .manage(Agent::default())
+        .manage(Placement::default())
         .manage(Mutex::new(load_prefs()))
         .invoke_handler(tauri::generate_handler![agent_send, get_prefs, set_prefs, preview_sound])
         .setup(move |app| {
             // Menu-bar app: no Dock icon, no app switcher entry.
             #[cfg(target_os = "macos")]
             app.set_activation_policy(tauri::ActivationPolicy::Accessory);
+
+            apply_theme(&panel(app.handle()), &app.state::<Mutex<Prefs>>().lock().unwrap().theme.clone());
 
             if let Err(e) = app.global_shortcut().register(hotkey.as_str()) {
                 eprintln!("quickclaude: could not register hotkey {hotkey:?}: {e}");
@@ -303,8 +341,12 @@ pub fn run() {
         })
         .on_window_event(|window, event| {
             // Click-away hides the panel, like Spotlight.
-            if let WindowEvent::Focused(false) = event {
-                let _ = window.hide();
+            match event {
+                WindowEvent::Focused(false) => {
+                    let _ = window.hide();
+                }
+                WindowEvent::Moved(pos) => on_moved(window.app_handle(), *pos),
+                _ => {}
             }
         })
         .build(tauri::generate_context!())

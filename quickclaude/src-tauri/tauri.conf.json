@@ -27,7 +27,7 @@
         "shadow": true,
         "windowEffects": {
           "effects": [
-            "hudWindow"
+            "popover"
           ],
           "state": "active",
           "radius": 14
