@@ -1,5 +1,6 @@
 use std::io::{BufRead, BufReader, Write};
 use std::process::{Child, ChildStdin, Command, Stdio};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Mutex;
 
 use tauri::menu::{Menu, MenuItem};
@@ -254,10 +255,23 @@ fn show_panel(app: &AppHandle) {
     let _ = window.emit("panel-shown", ());
 }
 
+/// Pinned (⌘P in the panel), the panel stays up when it loses focus.
+#[derive(Default)]
+struct Pinned(AtomicBool);
+
+#[tauri::command]
+fn set_pinned(pinned: bool, state: tauri::State<Pinned>) {
+    state.0.store(pinned, Ordering::Relaxed);
+}
+
 fn toggle_panel(app: &AppHandle) {
     let window = panel(app);
-    if window.is_visible().unwrap_or(false) && window.is_focused().unwrap_or(false) {
+    let visible = window.is_visible().unwrap_or(false);
+    if visible && window.is_focused().unwrap_or(false) {
         let _ = window.hide();
+    } else if visible {
+        // A pinned panel left up behind another app: just bring focus back, keep what's in it.
+        let _ = window.set_focus();
     } else {
         show_panel(app);
     }
@@ -281,8 +295,9 @@ pub fn run() {
         )
         .manage(Agent::default())
         .manage(Placement::default())
+        .manage(Pinned::default())
         .manage(Mutex::new(load_prefs()))
-        .invoke_handler(tauri::generate_handler![agent_send, get_prefs, set_prefs, preview_sound])
+        .invoke_handler(tauri::generate_handler![agent_send, get_prefs, set_prefs, preview_sound, set_pinned])
         .setup(move |app| {
             // Menu-bar app: no Dock icon, no app switcher entry.
             #[cfg(target_os = "macos")]
@@ -340,10 +355,12 @@ pub fn run() {
             Ok(())
         })
         .on_window_event(|window, event| {
-            // Click-away hides the panel, like Spotlight.
+            // Click-away hides the panel, like Spotlight, unless it's pinned.
             match event {
                 WindowEvent::Focused(false) => {
-                    let _ = window.hide();
+                    if !window.state::<Pinned>().0.load(Ordering::Relaxed) {
+                        let _ = window.hide();
+                    }
                 }
                 WindowEvent::Moved(pos) => on_moved(window.app_handle(), *pos),
                 _ => {}

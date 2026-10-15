@@ -3,6 +3,7 @@ import { createStore } from "solid-js/store";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { getCurrentWindow, LogicalSize } from "@tauri-apps/api/window";
+import { getCurrentWebview } from "@tauri-apps/api/webview";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import { marked } from "marked";
 import DOMPurify from "dompurify";
@@ -602,6 +603,9 @@ export default function App() {
     } else if (e.metaKey && e.key === "n") {
       e.preventDefault();
       reset();
+    } else if (e.metaKey && e.key === "p") {
+      e.preventDefault();
+      togglePin();
     } else if (e.metaKey && e.key === "t") {
       e.preventDefault();
       toTerminal();
@@ -609,6 +613,32 @@ export default function App() {
       e.preventDefault();
       if (busy()) send({ type: "stop" });
     }
+  }
+
+  // Pinned, the panel stays up (and on top) when another app takes focus; Esc still hides it.
+  const [pinned, setPinned] = createSignal(false);
+  function togglePin() {
+    const next = !pinned();
+    setPinned(next);
+    invoke("set_pinned", { pinned: next });
+  }
+
+  // Files dropped on the panel go into the input as their full paths, at the cursor.
+  function insertPaths(paths: string[]) {
+    if (!paths.length) return;
+    const text = paths.join(" ");
+    const start = input.selectionStart ?? draft().length;
+    const end = input.selectionEnd ?? start;
+    const before = draft().slice(0, start);
+    const after = draft().slice(end);
+    const pad = before && !/\s$/.test(before) ? " " : "";
+    const tail = after && !/^\s/.test(after) ? " " : "";
+    setDraft(before + pad + text + tail + after);
+    input.value = draft();
+    const caret = (before + pad + text + tail).length;
+    input.focus();
+    input.setSelectionRange(caret, caret);
+    autosize();
   }
 
   function autosize() {
@@ -658,7 +688,7 @@ export default function App() {
     }
     if (overlay() === "prefs") return onPrefsKey(e);
     if (e.target === input) return;
-    const panelKey = e.key === "Escape" || e.key === "Tab" || (e.metaKey && ["t", "n", "."].includes(e.key));
+    const panelKey = e.key === "Escape" || e.key === "Tab" || (e.metaKey && ["t", "n", ".", "p"].includes(e.key));
     if (!panelKey) return;
     window.getSelection()?.removeAllRanges();
     input.focus();
@@ -673,6 +703,9 @@ export default function App() {
     const unlisten = Promise.all([
       listen<string>("agent", (e) => onAgent(JSON.parse(e.payload))),
       listen("open-prefs", () => openPrefs()),
+      getCurrentWebview().onDragDropEvent((e) => {
+        if (e.payload.type === "drop") insertPaths(e.payload.paths);
+      }),
       listen<string>("open-chat", (e) => {
         if (sessionId() !== e.payload) openSession({ id: e.payload, title: "", at: 0 });
         else setMode("chat");
@@ -729,7 +762,7 @@ export default function App() {
         </div>
       </Show>
       <div class="bar">
-        <svg class="logo" viewBox="0 0 24 24" aria-hidden="true">
+        <svg class="logo" viewBox="2 0 20 20" aria-hidden="true">
           <path d="M12 2l1.8 6.2L20 10l-6.2 1.8L12 18l-1.8-6.2L4 10l6.2-1.8z" />
         </svg>
         <textarea

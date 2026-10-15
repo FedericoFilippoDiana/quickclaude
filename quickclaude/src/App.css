@@ -96,9 +96,10 @@ button {
 }
 
 .logo {
-  width: 22px;
-  height: 22px;
-  margin-top: 3px;
+  /* Centred on the first line of the input (42px tall, 36px in chat). */
+  width: 28px;
+  height: 28px;
+  margin-top: 7px;
   fill: var(--accent);
   flex-shrink: 0;
 }
@@ -115,6 +116,12 @@ textarea {
   padding: 0;
   max-height: 240px;
   caret-color: var(--accent);
+}
+
+.chat .logo {
+  width: 24px;
+  height: 24px;
+  margin-top: 6px;
 }
 
 .chat textarea {
@@ -212,7 +219,7 @@ textarea::placeholder {
 .attachments {
   display: flex;
   gap: 8px;
-  padding: 12px 20px 0 54px;
+  padding: 12px 20px 0 60px;
   flex-wrap: wrap;
 }
 
