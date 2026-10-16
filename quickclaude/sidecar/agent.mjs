@@ -131,13 +131,17 @@ function inputQueue() {
   };
 }
 
+// Claude Code can take over a minute to start when the Mac is busy (just logged in,
+// MCP servers starting), so allow more than the SDK's 60 s.
+const START_TIMEOUT = 180_000;
+
 // A session is an open Claude Code process waiting on its input queue.
 // New sessions come from a pre-started process; resumed ones start cold.
 async function createSession(resume) {
   const input = inputQueue();
   const q = resume
     ? query({ prompt: input, options: { ...OPTIONS, resume } })
-    : (await startup({ options: OPTIONS })).query(input);
+    : (await startup({ options: OPTIONS, initializeTimeoutMs: START_TIMEOUT })).query(input);
   return {
     input,
     q,
@@ -165,11 +169,15 @@ const live = new Set(); // every running session: the current one plus parked on
 let seq = 0; // bumps on every switch, so a slow start can tell it was superseded
 let models = null;
 
-function warmSpare() {
-  spare = createSession();
-  spare.catch((e) => {
+// Nobody is waiting on a spare, so a failed start retries quietly before it reports.
+function warmSpare(attempt = 1) {
+  const pending = createSession();
+  spare = pending;
+  pending.catch((e) => {
+    if (spare !== pending) return; // already taken by a question, which reports its own failure
     spare = null;
-    emit({ type: "error", message: `Warm-up failed: ${e.message}` });
+    if (attempt < 3) setTimeout(() => spare || warmSpare(attempt + 1), 5000);
+    else emit({ type: "error", message: `Warm-up failed: ${e.message}` });
   });
 }
 

@@ -8,6 +8,7 @@ use tauri::tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent}
 use serde::{Deserialize, Serialize};
 use tauri::path::BaseDirectory;
 use tauri::{AppHandle, Emitter, LogicalPosition, LogicalSize, Manager, PhysicalPosition, RunEvent, Theme, WebviewWindow, WindowEvent};
+use tauri_plugin_dialog::{DialogExt, MessageDialogButtons};
 use tauri_plugin_global_shortcut::{GlobalShortcutExt, ShortcutState};
 use tauri_plugin_notification::NotificationExt;
 
@@ -267,6 +268,25 @@ fn set_on_top(on: bool, state: tauri::State<OnTop>) {
     state.0.store(on, Ordering::Relaxed);
 }
 
+/// Quitting asks first: it stops the hotkey and any chat still working in the background.
+fn confirm_quit(app: &AppHandle) {
+    // A menu-bar app isn't active when its tray menu is used, so the alert would open behind other windows.
+    #[cfg(target_os = "macos")]
+    if let Some(mtm) = objc2::MainThreadMarker::new() {
+        objc2_app_kit::NSApplication::sharedApplication(mtm).activate();
+    }
+    let handle = app.clone();
+    app.dialog()
+        .message("The hotkey stops working until you open QuickClaude again, and chats still working in the background are stopped.")
+        .title("Quit QuickClaude?")
+        .buttons(MessageDialogButtons::OkCancelCustom("Quit".into(), "Cancel".into()))
+        .show(move |quit| {
+            if quit {
+                handle.exit(0);
+            }
+        });
+}
+
 /// Full screen (⌘F in the panel): the panel fills its screen's work area (menu bar and Dock
 /// stay visible). Holds where the panel was before, to put it back. Not a native full-screen
 /// Space, so the panel still floats over other apps and hides on click-away.
@@ -323,6 +343,7 @@ pub fn run() {
     let app = tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_notification::init())
+        .plugin(tauri_plugin_dialog::init())
         .plugin(
             tauri_plugin_global_shortcut::Builder::new()
                 .with_handler(|app, _shortcut, event| {
@@ -365,7 +386,7 @@ pub fn run() {
                         show_panel(app);
                         let _ = panel(app).emit("open-prefs", ());
                     }
-                    "quit" => app.exit(0),
+                    "quit" => confirm_quit(app),
                     _ => {}
                 })
                 .on_tray_icon_event(|tray, event| {
