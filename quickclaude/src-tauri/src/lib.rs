@@ -7,7 +7,7 @@ use tauri::menu::{Menu, MenuItem};
 use tauri::tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent};
 use serde::{Deserialize, Serialize};
 use tauri::path::BaseDirectory;
-use tauri::{AppHandle, Emitter, LogicalPosition, Manager, PhysicalPosition, RunEvent, Theme, WebviewWindow, WindowEvent};
+use tauri::{AppHandle, Emitter, LogicalPosition, LogicalSize, Manager, PhysicalPosition, RunEvent, Theme, WebviewWindow, WindowEvent};
 use tauri_plugin_global_shortcut::{GlobalShortcutExt, ShortcutState};
 use tauri_plugin_notification::NotificationExt;
 
@@ -230,7 +230,10 @@ fn show_panel(app: &AppHandle) {
     let window = panel(app);
     let placement = app.state::<Placement>();
     let dragged = *placement.dragged.lock().unwrap();
-    if let Some(pos) = dragged {
+    let full = app.state::<Full>().0.lock().unwrap().is_some();
+    if full {
+        // Full screen (⌘F) stays put: it already fills its screen.
+    } else if let Some(pos) = dragged {
         *placement.ours.lock().unwrap() = Some(pos);
         let _ = window.set_position(pos);
     }
@@ -255,13 +258,49 @@ fn show_panel(app: &AppHandle) {
     let _ = window.emit("panel-shown", ());
 }
 
-/// Pinned (⌘P in the panel), the panel stays up when it loses focus.
+/// Keep on top (⌘P in the panel): the panel stays up when it loses focus.
 #[derive(Default)]
-struct Pinned(AtomicBool);
+struct OnTop(AtomicBool);
 
 #[tauri::command]
-fn set_pinned(pinned: bool, state: tauri::State<Pinned>) {
-    state.0.store(pinned, Ordering::Relaxed);
+fn set_on_top(on: bool, state: tauri::State<OnTop>) {
+    state.0.store(on, Ordering::Relaxed);
+}
+
+/// Full screen (⌘F in the panel): the panel fills its screen's work area (menu bar and Dock
+/// stay visible). Holds where the panel was before, to put it back. Not a native full-screen
+/// Space, so the panel still floats over other apps and hides on click-away.
+#[derive(Default)]
+struct Full(Mutex<Option<PhysicalPosition<i32>>>);
+
+/// `width` and `height` (logical) are the size to return to when leaving full screen.
+#[tauri::command]
+fn set_full(app: AppHandle, full: bool, width: f64, height: f64) -> Result<(), String> {
+    let window = panel(&app);
+    let state = app.state::<Full>();
+    let mut restore = state.0.lock().unwrap();
+    let placement = app.state::<Placement>();
+    if full {
+        if restore.is_some() {
+            return Ok(());
+        }
+        let monitor = window
+            .current_monitor()
+            .ok()
+            .flatten()
+            .or_else(|| window.primary_monitor().ok().flatten())
+            .ok_or("no screen")?;
+        let area = monitor.work_area();
+        *restore = Some(window.outer_position().map_err(|e| e.to_string())?);
+        *placement.ours.lock().unwrap() = Some(area.position);
+        window.set_position(area.position).map_err(|e| e.to_string())?;
+        window.set_size(area.size).map_err(|e| e.to_string())?;
+    } else if let Some(pos) = restore.take() {
+        window.set_size(LogicalSize::new(width, height)).map_err(|e| e.to_string())?;
+        *placement.ours.lock().unwrap() = Some(pos);
+        window.set_position(pos).map_err(|e| e.to_string())?;
+    }
+    Ok(())
 }
 
 fn toggle_panel(app: &AppHandle) {
@@ -270,7 +309,7 @@ fn toggle_panel(app: &AppHandle) {
     if visible && window.is_focused().unwrap_or(false) {
         let _ = window.hide();
     } else if visible {
-        // A pinned panel left up behind another app: just bring focus back, keep what's in it.
+        // A panel kept on top behind another app: just bring focus back, keep what's in it.
         let _ = window.set_focus();
     } else {
         show_panel(app);
@@ -295,9 +334,10 @@ pub fn run() {
         )
         .manage(Agent::default())
         .manage(Placement::default())
-        .manage(Pinned::default())
+        .manage(OnTop::default())
+        .manage(Full::default())
         .manage(Mutex::new(load_prefs()))
-        .invoke_handler(tauri::generate_handler![agent_send, get_prefs, set_prefs, preview_sound, set_pinned])
+        .invoke_handler(tauri::generate_handler![agent_send, get_prefs, set_prefs, preview_sound, set_on_top, set_full])
         .setup(move |app| {
             // Menu-bar app: no Dock icon, no app switcher entry.
             #[cfg(target_os = "macos")]
@@ -355,10 +395,10 @@ pub fn run() {
             Ok(())
         })
         .on_window_event(|window, event| {
-            // Click-away hides the panel, like Spotlight, unless it's pinned.
+            // Click-away hides the panel, like Spotlight, unless it's kept on top.
             match event {
                 WindowEvent::Focused(false) => {
-                    if !window.state::<Pinned>().0.load(Ordering::Relaxed) {
+                    if !window.state::<OnTop>().0.load(Ordering::Relaxed) {
                         let _ = window.hide();
                     }
                 }

@@ -130,7 +130,7 @@ function UserBody(props: { msg: Msg }) {
   );
 }
 
-type Overlay = "none" | "history" | "prefs";
+type Overlay = "none" | "history" | "prefs" | "keys";
 type Theme = "system" | "light" | "dark";
 type Prefs = { bringForward: boolean; sound: boolean; notification: boolean; theme: Theme };
 type Toggle = Exclude<keyof Prefs, "theme">;
@@ -159,6 +159,57 @@ const PREF_ROWS: { key: Toggle; title: string; detail: string }[] = [
   },
 ];
 
+// The shortcuts screen (⌘/), in the Preferences layout. The panel shows no key hints of its own.
+const KEY_SECTIONS: { title: string; rows: { keys: string[]; title: string }[] }[] = [
+  {
+    title: "Anywhere",
+    rows: [
+      { keys: ["⌥Space"], title: "Show or hide QuickClaude" },
+      { keys: ["⌘/"], title: "Keyboard shortcuts" },
+      { keys: ["⌘,"], title: "Preferences" },
+      { keys: ["⌘F"], title: "Full screen" },
+      { keys: ["⌘P"], title: "Keep on top" },
+      { keys: ["⌘N"], title: "New chat" },
+      { keys: ["⌘T"], title: "Continue in a terminal" },
+      { keys: ["⌘."], title: "Stop the answer" },
+      { keys: ["⇥"], title: "Next model" },
+      { keys: ["⇧⇥"], title: "Next effort" },
+      { keys: ["esc"], title: "Go back a step, then hide" },
+    ],
+  },
+  {
+    title: "Asking",
+    rows: [
+      { keys: ["↩"], title: "Ask a new question" },
+      { keys: ["⌘↩"], title: "Follow up as a chat" },
+      { keys: ["⇧↩"], title: "New line" },
+      { keys: ["↓"], title: "Open history (on an empty input)" },
+      { keys: ["⌘V"], title: "Paste an image" },
+      { keys: ["⌫"], title: "Remove the last image (on an empty input)" },
+      { keys: ["drop"], title: "Drop files to insert their paths" },
+    ],
+  },
+  {
+    title: "History",
+    rows: [
+      { keys: ["↑", "↓"], title: "Choose a chat" },
+      { keys: ["↩"], title: "Open it" },
+      { keys: ["⇧↑", "⇧↓"], title: "Select several (or ⇧click, ⌘click)" },
+      { keys: ["⌘A"], title: "Select all" },
+      { keys: ["⌫"], title: "Delete (press twice)" },
+      { keys: ["esc"], title: "Clear the selection, then close" },
+    ],
+  },
+  {
+    title: "Preferences",
+    rows: [
+      { keys: ["↑", "↓"], title: "Choose a setting" },
+      { keys: ["space"], title: "Turn it on or off" },
+      { keys: ["←", "→"], title: "Change the theme" },
+    ],
+  },
+];
+
 export default function App() {
   const [messages, setMessages] = createStore<Msg[]>([]);
   const [mode, setMode] = createSignal<"compact" | "chat">("compact");
@@ -168,12 +219,14 @@ export default function App() {
   const [notice, setNotice] = createSignal("");
   const [attachments, setAttachments] = createSignal<Image[]>([]);
   const [sessionId, setSessionId] = createSignal<string | null>(null);
+  // The open chat's name from history; a chat started here is named by its first question.
+  const [chatTitle, setChatTitle] = createSignal("");
+  const chatName = () => chatTitle() || messages.find((m) => m.role === "user")?.text || "Chat";
   const [models, setModels] = createSignal<Model[]>([]);
   const [model, setModel] = createSignal("");
   const [effort, setEffort] = createSignal("");
   // Which half of the label just changed; drives the highlight, dots and placeholder.
   const [flash, setFlash] = createSignal<"model" | "effort" | null>(null);
-  const [chosen, setChosen] = createSignal(true);
   const [sessions, setSessions] = createSignal<SessionRow[] | null>(null);
   const [selected, setSelected] = createSignal(0);
   // Background tasks of the open chat, and every chat with something running (history lamps).
@@ -185,13 +238,15 @@ export default function App() {
   let stashedDraft = "";
   let input!: HTMLTextAreaElement;
   let panel!: HTMLDivElement;
+  let logo!: SVGSVGElement;
   let list: HTMLDivElement | undefined;
   let historyList: HTMLDivElement | undefined;
+  let keysList: HTMLDivElement | undefined;
 
   const win = getCurrentWindow();
   const last = () => messages.length - 1;
   const lastAnswer = () => messages[last()];
-  const tall = () => overlay() === "history" || (mode() === "chat" && overlay() !== "prefs");
+  const tall = () => overlay() === "history" || overlay() === "keys" || (mode() === "chat" && overlay() === "none");
 
   // --- model & effort ---
   const modelName = () => models().find((m) => m.value === model())?.name ?? "";
@@ -222,7 +277,6 @@ export default function App() {
       setEffort(efforts[(efforts.indexOf(effort()) + 1) % efforts.length]);
     }
     send({ type: "choice", model: model(), effort: effort() });
-    setChosen(true);
     setFlash(kind);
     clearTimeout(flashTimer);
     flashTimer = window.setTimeout(() => setFlash(null), 1200);
@@ -348,6 +402,16 @@ export default function App() {
     }
   }
 
+  function onKeysKey(e: KeyboardEvent) {
+    if (e.key === "ArrowDown" || e.key === "ArrowUp") {
+      e.preventDefault();
+      keysList?.scrollBy({ top: e.key === "ArrowDown" ? 80 : -80, behavior: "smooth" });
+    } else if (e.key === "Escape") {
+      e.preventDefault();
+      setOverlay("none");
+    }
+  }
+
   function showHistory() {
     stashedDraft = draft();
     setDraft("");
@@ -375,6 +439,7 @@ export default function App() {
     setBusy(false);
     setNotice("");
     setSessionId(row.id);
+    setChatTitle(row.title);
     setTasks(0);
     setMode("chat");
     send({ type: "open", id: row.id, turn });
@@ -397,7 +462,6 @@ export default function App() {
     switch (ev.type) {
       case "models":
         onModels(ev.models, ev.defaultModel, ev.defaultEffort);
-        setChosen(ev.chosen);
         break;
       case "session":
         setSessionId(ev.id);
@@ -482,6 +546,7 @@ export default function App() {
     if (!followUp) {
       setMessages([]);
       setSessionId(null);
+      setChatTitle("");
       setTasks(0);
     }
     setMessages(messages.length, { role: "user", text, images: images.map((i) => i.url) });
@@ -512,6 +577,7 @@ export default function App() {
     setDraft("");
     setAttachments([]);
     setSessionId(null);
+    setChatTitle("");
     setNotice("");
   }
 
@@ -524,10 +590,6 @@ export default function App() {
   function toTerminal() {
     if (!sessionId() || working()) return;
     send({ type: "handoff" });
-  }
-
-  function expand() {
-    if (messages.length) setMode("chat");
   }
 
   async function onPaste(e: ClipboardEvent) {
@@ -605,7 +667,7 @@ export default function App() {
       reset();
     } else if (e.metaKey && e.key === "p") {
       e.preventDefault();
-      togglePin();
+      toggleOnTop();
     } else if (e.metaKey && e.key === "t") {
       e.preventDefault();
       toTerminal();
@@ -615,12 +677,36 @@ export default function App() {
     }
   }
 
-  // Pinned, the panel stays up (and on top) when another app takes focus; Esc still hides it.
-  const [pinned, setPinned] = createSignal(false);
-  function togglePin() {
-    const next = !pinned();
-    setPinned(next);
-    invoke("set_pinned", { pinned: next });
+  // Keep on top: the panel stays up when another app takes focus; Esc still hides it.
+  // A faint accent ring marks it; toggling turns the spark a quarter and names the new state.
+  const [onTop, setOnTop] = createSignal(false);
+  const [onTopFlash, setOnTopFlash] = createSignal(false);
+  let onTopTimer = 0;
+  function toggleOnTop() {
+    const next = !onTop();
+    setOnTop(next);
+    invoke("set_on_top", { on: next });
+    logo.animate([{ transform: "rotate(0deg) scale(1)" }, { transform: "rotate(45deg) scale(1.18)" }, { transform: "rotate(90deg) scale(1)" }], {
+      duration: 420,
+      easing: "cubic-bezier(0.3, 0.7, 0.3, 1)",
+    });
+    setOnTopFlash(true);
+    clearTimeout(onTopTimer);
+    onTopTimer = window.setTimeout(() => setOnTopFlash(false), 1400);
+  }
+
+  // Full screen (⌘F, in any view): the panel fills the screen with a centred reading column.
+  // The shell places it and puts it back; until then the panel stops sizing itself.
+  const [full, setFull] = createSignal(false);
+  function toggleFull() {
+    const next = !full();
+    setFull(next);
+    if (next) invoke("set_full", { full: true, width: WIDTH, height: lastHeight });
+    else {
+      // Measured with the full-screen layout gone, so the panel returns at its normal size.
+      lastHeight = wantedHeight();
+      invoke("set_full", { full: false, width: WIDTH, height: lastHeight });
+    }
   }
 
   // Files dropped on the panel go into the input as their full paths, at the cursor.
@@ -648,8 +734,10 @@ export default function App() {
 
   // --- window sizing: compact hugs its content; chat and history are a fixed tall panel ---
   let lastHeight = 0;
+  const wantedHeight = () => (tall() ? CHAT_HEIGHT : Math.min(Math.ceil(panel.offsetHeight), COMPACT_MAX));
   const fit = () => {
-    const h = tall() ? CHAT_HEIGHT : Math.min(Math.ceil(panel.offsetHeight), COMPACT_MAX);
+    if (full()) return;
+    const h = wantedHeight();
     if (h !== lastHeight) {
       lastHeight = h;
       win.setSize(new LogicalSize(WIDTH, h));
@@ -677,6 +765,11 @@ export default function App() {
 
   // Selecting text in the chat moves focus off the input; the panel's keys should still work.
   function onWindowKeyDown(e: KeyboardEvent) {
+    if (e.metaKey && e.code === "KeyF") {
+      e.preventDefault();
+      toggleFull();
+      return;
+    }
     if (e.metaKey && e.key === ",") {
       e.preventDefault();
       if (overlay() === "prefs") setOverlay("none");
@@ -686,7 +779,17 @@ export default function App() {
       }
       return;
     }
+    if (e.metaKey && e.key === "/") {
+      e.preventDefault();
+      if (overlay() === "keys") setOverlay("none");
+      else {
+        if (overlay() === "history") closeOverlay();
+        setOverlay("keys");
+      }
+      return;
+    }
     if (overlay() === "prefs") return onPrefsKey(e);
+    if (overlay() === "keys") return onKeysKey(e);
     if (e.target === input) return;
     const panelKey = e.key === "Escape" || e.key === "Tab" || (e.metaKey && ["t", "n", ".", "p"].includes(e.key));
     if (!panelKey) return;
@@ -728,7 +831,7 @@ export default function App() {
 
   // Drag the panel by any spot that isn't a control or selectable text; it reopens where it's left.
   function onMouseDown(e: MouseEvent) {
-    if (e.button !== 0) return;
+    if (e.button !== 0 || full()) return;
     if ((e.target as HTMLElement).closest("button, a, textarea, input, .pref, .answer, .list")) return;
     e.preventDefault();
     win.startDragging();
@@ -762,7 +865,7 @@ export default function App() {
         </div>
       </Show>
       <div class="bar">
-        <svg class="logo" viewBox="2 0 20 20" aria-hidden="true">
+        <svg ref={logo} class="logo" viewBox="2 0 20 20" aria-hidden="true">
           <path d="M12 2l1.8 6.2L20 10l-6.2 1.8L12 18l-1.8-6.2L4 10l6.2-1.8z" />
         </svg>
         <textarea
@@ -772,6 +875,10 @@ export default function App() {
           placeholder={
             overlay() === "history"
               ? "Search chats…"
+              : onTopFlash()
+              ? onTop()
+                ? "Keep on top: on"
+                : "Keep on top: off"
               : flash()
                 ? `Ask ${modelName()} · ${effort()}…`
                 : mode() === "chat"
@@ -793,9 +900,6 @@ export default function App() {
         </Show>
         <Show when={modelName() && overlay() !== "history"}>
           <div class="model-label">
-            <Show when={!chosen()}>
-              <span class="first-hint">⇥ model · ⇧⇥ effort</span>
-            </Show>
             <button class="part model" title="Next model (⇥)" onClick={() => cycle("model")}>
               <Show when={model()} keyed>
                 {(_) => <span classList={{ flash: flash() === "model" }}>{modelName()}</span>}
@@ -889,10 +993,40 @@ export default function App() {
         </div>
       </div>
       <div class="prefs-foot">
-        <span>⌥Space opens QuickClaude · chats live in ~/QuickClaude</span>
-        <span class="hint">↑↓ choose</span>
-        <span class="hint">space toggle · ←→ theme</span>
-        <span class="hint">esc close</span>
+        <span>Chats live in ~/QuickClaude</span>
+        <span class="hint">⌘/ shortcuts</span>
+      </div>
+    </>
+  );
+
+  const keysView = (
+    <>
+      <div class="prefs-head">Keyboard Shortcuts</div>
+      <div class="keys" ref={keysList}>
+        <For each={KEY_SECTIONS}>
+          {(section) => (
+            <>
+              <div class="keys-section">{section.title}</div>
+              <div class="prefs">
+                <For each={section.rows}>
+                  {(row) => (
+                    <div class="pref">
+                      <span class="pref-text">
+                        <span class="pref-title">{row.title}</span>
+                      </span>
+                      <span class="caps">
+                        <For each={row.keys}>{(k) => <span>{k}</span>}</For>
+                      </span>
+                    </div>
+                  )}
+                </For>
+              </div>
+            </>
+          )}
+        </For>
+      </div>
+      <div class="prefs-foot">
+        <span>esc close</span>
       </div>
     </>
   );
@@ -932,11 +1066,7 @@ export default function App() {
           </For>
         </Show>
       </div>
-      {footer(
-        picked().size > 1
-          ? [`${picked().size} selected`, "⌫ delete", "esc back"]
-          : ["↑↓ choose", "⇧ select more", "↩ open", "⌫ delete", "esc back"],
-      )}
+      <Show when={picked().size > 1}>{footer([`${picked().size} selected`])}</Show>
     </>
   );
 
@@ -944,10 +1074,12 @@ export default function App() {
     <div
       ref={panel}
       class="panel"
-      classList={{ tall: tall(), chat: mode() === "chat" && overlay() === "none" }}
+      classList={{ tall: tall(), full: full(), chat: mode() === "chat" && overlay() === "none" }}
       onClick={onClick}
       onMouseDown={onMouseDown}
     >
+      <div class="top-ring" classList={{ on: onTop() }} />
+      <Show when={overlay() !== "keys"} fallback={keysView}>
       <Show when={overlay() !== "prefs"} fallback={prefsView}>
       <Show when={overlay() !== "history"} fallback={historyView}>
         <Show
@@ -970,15 +1102,6 @@ export default function App() {
                   <div class="footer">
                     <span class="notice">{notice()}</span>
                     <Show when={!busy() && messages.length}>
-                      <span class="hint">↩ new question</span>
-                      <button class="hint link" onClick={expand}>
-                        ⌘↩ follow up
-                      </button>
-                      <Show when={sessionId() && !working()}>
-                        <button class="hint link" onClick={toTerminal}>
-                          ⌘T terminal
-                        </button>
-                      </Show>
                       <span class="meta">{lastAnswer()?.meta}</span>
                     </Show>
                   </div>
@@ -988,17 +1111,7 @@ export default function App() {
           }
         >
           <div class="chat-head">
-            <span>Chat</span>
-            <span class="actions">
-              <Show when={sessionId() && !working()}>
-                <button class="hint link" onClick={toTerminal}>
-                  ⌘T terminal
-                </button>
-              </Show>
-              <button class="hint link" onClick={reset}>
-                ⌘N new
-              </button>
-            </span>
+            <span class="chat-name">{chatName()}</span>
           </div>
           <div class="list" ref={list}>
             <For each={messages}>
@@ -1017,6 +1130,7 @@ export default function App() {
           </div>
           {bar}
         </Show>
+      </Show>
       </Show>
       </Show>
     </div>
