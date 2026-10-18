@@ -376,6 +376,27 @@ pub fn run() {
             #[cfg(target_os = "macos")]
             app.set_activation_policy(tauri::ActivationPolicy::Accessory);
 
+            // ⌘⇧H continues the chat in a terminal, as a native menu key in place of the default
+            // app menu's Hide items (⌘H itself is taken by AeroSpace, so no app ever sees it).
+            #[cfg(target_os = "macos")]
+            if let Some(menu) = app.menu() {
+                if let Some(tauri::menu::MenuItemKind::Submenu(app_menu)) = menu.items()?.first() {
+                    for item in app_menu.items()? {
+                        if let tauri::menu::MenuItemKind::Predefined(p) = &item {
+                            if p.text()?.starts_with("Hide") {
+                                app_menu.remove(p)?;
+                            }
+                        }
+                    }
+                    app_menu.insert(&MenuItem::with_id(app, "terminal", "Continue in a Terminal", true, Some("CmdOrCtrl+Shift+H"))?, 2)?;
+                }
+            }
+            app.on_menu_event(|app, event| {
+                if event.id.as_ref() == "terminal" {
+                    let _ = panel(app).emit("to-terminal", ());
+                }
+            });
+
             apply_theme(&panel(app.handle()), &app.state::<Mutex<Prefs>>().lock().unwrap().theme.clone());
 
             if let Err(e) = app.global_shortcut().register(hotkey.as_str()) {

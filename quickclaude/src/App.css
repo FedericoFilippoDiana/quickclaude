@@ -87,7 +87,7 @@ button {
   max-height: none;
 }
 
-/* --- keep on top (⌘P): a faint accent ring that blooms in, then settles --- */
+/* --- keep on top (⌘T): a faint accent ring that blooms in, then settles --- */
 
 .top-ring {
   position: fixed;

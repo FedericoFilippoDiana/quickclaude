@@ -56,7 +56,7 @@ const onPath = (name) =>
 // Run your installed `claude`, so the app matches your terminal's version and updates.
 // Falls back to the SDK's bundled copy (dev only; the packaged app doesn't include it).
 const CLAUDE = process.env.QUICKCLAUDE_CLAUDE || onPath("claude");
-// The terminal workspace manager; when it's running, ⌘T opens a workspace there.
+// The terminal workspace manager; when it's running, ⌘⇧H opens a workspace there.
 const HERDR = onPath("herdr");
 
 // Never let an API key in the environment override the subscription login.

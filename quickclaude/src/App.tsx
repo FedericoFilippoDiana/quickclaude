@@ -168,9 +168,9 @@ const KEY_SECTIONS: { title: string; rows: { keys: string[]; title: string }[] }
       { keys: ["⌘/"], title: "Keyboard shortcuts" },
       { keys: ["⌘,"], title: "Preferences" },
       { keys: ["⌘F"], title: "Full screen" },
-      { keys: ["⌘P"], title: "Keep on top" },
+      { keys: ["⌘T"], title: "Keep on top" },
       { keys: ["⌘N"], title: "New chat" },
-      { keys: ["⌘T"], title: "Continue in a terminal" },
+      { keys: ["⌘⇧H"], title: "Continue in a terminal" },
       { keys: ["⌘."], title: "Stop the answer" },
       { keys: ["⇥"], title: "Next model" },
       { keys: ["⇧⇥"], title: "Next effort" },
@@ -668,12 +668,9 @@ export default function App() {
     } else if (e.key === "Backspace" && !draft() && attachments().length) {
       e.preventDefault();
       setAttachments((a) => a.slice(0, -1));
-    } else if (e.metaKey && e.key === "p") {
-      e.preventDefault();
-      toggleOnTop();
     } else if (e.metaKey && e.key === "t") {
       e.preventDefault();
-      toTerminal();
+      toggleOnTop();
     } else if (e.metaKey && e.key === ".") {
       e.preventDefault();
       if (busy()) send({ type: "stop" });
@@ -800,7 +797,7 @@ export default function App() {
     if (overlay() === "prefs") return onPrefsKey(e);
     if (overlay() === "keys") return onKeysKey(e);
     if (e.target === input) return;
-    const panelKey = e.key === "Escape" || e.key === "Tab" || (e.metaKey && ["t", ".", "p"].includes(e.key));
+    const panelKey = e.key === "Escape" || e.key === "Tab" || (e.metaKey && ["t", "."].includes(e.key));
     if (!panelKey) return;
     window.getSelection()?.removeAllRanges();
     input.focus();
@@ -815,6 +812,8 @@ export default function App() {
     const unlisten = Promise.all([
       listen<string>("agent", (e) => onAgent(JSON.parse(e.payload))),
       listen("open-prefs", () => openPrefs()),
+      // ⌘⇧H arrives from the app menu (the shell), not as a key event.
+      listen("to-terminal", () => overlay() === "none" && toTerminal()),
       getCurrentWebview().onDragDropEvent((e) => {
         if (e.payload.type === "drop") insertPaths(e.payload.paths);
       }),
