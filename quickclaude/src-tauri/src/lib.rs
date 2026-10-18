@@ -1,6 +1,6 @@
 use std::io::{BufRead, BufReader, Write};
 use std::process::{Child, ChildStdin, Command, Stdio};
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Mutex;
 
 use tauri::menu::{Menu, MenuItem};
@@ -209,50 +209,64 @@ fn panel(app: &AppHandle) -> WebviewWindow {
     app.get_webview_window("main").expect("main window")
 }
 
-/// Where the panel goes. Until it's dragged, each show recentres it on the current screen;
-/// after a drag it reopens where it was left (until the app restarts).
+/// Where the panel goes. The first show centres it; after that it reopens where it was left,
+/// dragged or not (until the app restarts).
 #[derive(Default)]
-struct Placement {
-    /// The position we last set ourselves, so our own moves aren't mistaken for a drag.
-    ours: Mutex<Option<PhysicalPosition<i32>>>,
-    dragged: Mutex<Option<PhysicalPosition<i32>>>,
+struct Placed(AtomicBool);
+
+/// Spotlight-style placement on the panel's screen: horizontally centred, a fifth of the way down.
+fn centre(window: &WebviewWindow) -> Option<PhysicalPosition<i32>> {
+    let monitor = window
+        .current_monitor()
+        .ok()
+        .flatten()
+        .or_else(|| window.primary_monitor().ok().flatten())?;
+    let scale = monitor.scale_factor();
+    let pos = monitor.position().to_logical::<f64>(scale);
+    let size = monitor.size().to_logical::<f64>(scale);
+    let width = window
+        .outer_size()
+        .map(|s| s.to_logical::<f64>(scale).width)
+        .unwrap_or(720.0);
+    let at = LogicalPosition::new(pos.x + (size.width - width) / 2.0, pos.y + size.height * 0.2);
+    Some(at.to_physical(scale))
 }
 
-fn on_moved(app: &AppHandle, pos: PhysicalPosition<i32>) {
-    let placement = app.state::<Placement>();
-    let ours = *placement.ours.lock().unwrap();
-    let near = |p: PhysicalPosition<i32>| (p.x - pos.x).abs() <= 2 && (p.y - pos.y).abs() <= 2;
-    if !ours.is_some_and(near) {
-        *placement.dragged.lock().unwrap() = Some(pos);
+/// Bumped by each glide, so a newer one (or a second ⌘N) takes over from one still running.
+#[derive(Default)]
+struct Glide(AtomicU64);
+
+/// ⌘N: glide the panel back to the centre of its screen (ease-out, about a fifth of a second).
+#[tauri::command]
+fn center_panel(app: AppHandle) {
+    let window = panel(&app);
+    let (Some(to), Ok(from)) = (centre(&window), window.outer_position()) else { return };
+    if from == to {
+        return;
     }
+    let id = app.state::<Glide>().0.fetch_add(1, Ordering::Relaxed) + 1;
+    std::thread::spawn(move || {
+        const STEPS: i32 = 14;
+        for i in 1..=STEPS {
+            if app.state::<Glide>().0.load(Ordering::Relaxed) != id {
+                return;
+            }
+            let t = i as f64 / STEPS as f64;
+            let k = 1.0 - (1.0 - t).powi(3);
+            let lerp = |a: i32, b: i32| a + ((b - a) as f64 * k).round() as i32;
+            let _ = window.set_position(PhysicalPosition::new(lerp(from.x, to.x), lerp(from.y, to.y)));
+            std::thread::sleep(std::time::Duration::from_millis(14));
+        }
+    });
 }
 
 fn show_panel(app: &AppHandle) {
     let window = panel(app);
-    let placement = app.state::<Placement>();
-    let dragged = *placement.dragged.lock().unwrap();
-    let full = app.state::<Full>().0.lock().unwrap().is_some();
-    if full {
-        // Full screen (⌘F) stays put: it already fills its screen.
-    } else if let Some(pos) = dragged {
-        *placement.ours.lock().unwrap() = Some(pos);
-        let _ = window.set_position(pos);
-    }
-    // Spotlight-style placement: horizontally centred, a fifth of the way down.
-    else if let Ok(Some(monitor)) = window
-        .current_monitor()
-        .or_else(|_| window.primary_monitor())
-    {
-        let scale = monitor.scale_factor();
-        let pos = monitor.position().to_logical::<f64>(scale);
-        let size = monitor.size().to_logical::<f64>(scale);
-        let width = window
-            .outer_size()
-            .map(|s| s.to_logical::<f64>(scale).width)
-            .unwrap_or(720.0);
-        let at = LogicalPosition::new(pos.x + (size.width - width) / 2.0, pos.y + size.height * 0.2);
-        *placement.ours.lock().unwrap() = Some(at.to_physical(scale));
-        let _ = window.set_position(at);
+    // Shown before: a hidden window keeps its position (and full screen its size), so leave it.
+    if !app.state::<Placed>().0.swap(true, Ordering::Relaxed) {
+        if let Some(at) = centre(&window) {
+            let _ = window.set_position(at);
+        }
     }
     let _ = window.show();
     let _ = window.set_focus();
@@ -299,7 +313,6 @@ fn set_full(app: AppHandle, full: bool, width: f64, height: f64) -> Result<(), S
     let window = panel(&app);
     let state = app.state::<Full>();
     let mut restore = state.0.lock().unwrap();
-    let placement = app.state::<Placement>();
     if full {
         if restore.is_some() {
             return Ok(());
@@ -312,12 +325,10 @@ fn set_full(app: AppHandle, full: bool, width: f64, height: f64) -> Result<(), S
             .ok_or("no screen")?;
         let area = monitor.work_area();
         *restore = Some(window.outer_position().map_err(|e| e.to_string())?);
-        *placement.ours.lock().unwrap() = Some(area.position);
         window.set_position(area.position).map_err(|e| e.to_string())?;
         window.set_size(area.size).map_err(|e| e.to_string())?;
     } else if let Some(pos) = restore.take() {
         window.set_size(LogicalSize::new(width, height)).map_err(|e| e.to_string())?;
-        *placement.ours.lock().unwrap() = Some(pos);
         window.set_position(pos).map_err(|e| e.to_string())?;
     }
     Ok(())
@@ -354,11 +365,12 @@ pub fn run() {
                 .build(),
         )
         .manage(Agent::default())
-        .manage(Placement::default())
+        .manage(Placed::default())
+        .manage(Glide::default())
         .manage(OnTop::default())
         .manage(Full::default())
         .manage(Mutex::new(load_prefs()))
-        .invoke_handler(tauri::generate_handler![agent_send, get_prefs, set_prefs, preview_sound, set_on_top, set_full])
+        .invoke_handler(tauri::generate_handler![agent_send, get_prefs, set_prefs, preview_sound, set_on_top, set_full, center_panel])
         .setup(move |app| {
             // Menu-bar app: no Dock icon, no app switcher entry.
             #[cfg(target_os = "macos")]
@@ -423,7 +435,6 @@ pub fn run() {
                         let _ = window.hide();
                     }
                 }
-                WindowEvent::Moved(pos) => on_moved(window.app_handle(), *pos),
                 _ => {}
             }
         })

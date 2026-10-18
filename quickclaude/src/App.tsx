@@ -587,6 +587,12 @@ export default function App() {
     input.focus();
   }
 
+  // ⌘N: an empty input, and the panel glides back to the centre of its screen.
+  function newChat() {
+    reset();
+    if (!full()) invoke("center_panel");
+  }
+
   function toTerminal() {
     if (!sessionId() || working()) return;
     send({ type: "handoff" });
@@ -662,9 +668,6 @@ export default function App() {
     } else if (e.key === "Backspace" && !draft() && attachments().length) {
       e.preventDefault();
       setAttachments((a) => a.slice(0, -1));
-    } else if (e.metaKey && e.key === "n") {
-      e.preventDefault();
-      reset();
     } else if (e.metaKey && e.key === "p") {
       e.preventDefault();
       toggleOnTop();
@@ -765,6 +768,12 @@ export default function App() {
 
   // Selecting text in the chat moves focus off the input; the panel's keys should still work.
   function onWindowKeyDown(e: KeyboardEvent) {
+    // ⌘N works from every screen, history, preferences and shortcuts included.
+    if (e.metaKey && e.key === "n") {
+      e.preventDefault();
+      newChat();
+      return;
+    }
     if (e.metaKey && e.code === "KeyF") {
       e.preventDefault();
       toggleFull();
@@ -791,7 +800,7 @@ export default function App() {
     if (overlay() === "prefs") return onPrefsKey(e);
     if (overlay() === "keys") return onKeysKey(e);
     if (e.target === input) return;
-    const panelKey = e.key === "Escape" || e.key === "Tab" || (e.metaKey && ["t", "n", ".", "p"].includes(e.key));
+    const panelKey = e.key === "Escape" || e.key === "Tab" || (e.metaKey && ["t", ".", "p"].includes(e.key));
     if (!panelKey) return;
     window.getSelection()?.removeAllRanges();
     input.focus();
@@ -814,11 +823,13 @@ export default function App() {
         else setMode("chat");
       }),
       listen("panel-shown", () => {
-        if (overlay() !== "none") closeOverlay();
-        // Like Spotlight, a finished one-off answer doesn't come back; running answers and chats do.
-        if (mode() === "compact" && !working() && messages.length) reset();
+        // The panel comes back exactly as it was left: answer, chat, open screen, draft and cursor.
+        if (overlay() === "history") {
+          // A delete armed before hiding shouldn't fire on the first key after; the list may be stale.
+          setArmed(false);
+          send({ type: "history" });
+        }
         input.focus();
-        input.select();
       }),
     ]);
     onCleanup(() => {
