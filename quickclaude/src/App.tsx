@@ -175,6 +175,7 @@ const KEY_SECTIONS: { title: string; rows: { keys: string[]; title: string }[] }
       { keys: ["⇥"], title: "Next model" },
       { keys: ["⇧⇥"], title: "Next effort" },
       { keys: ["esc"], title: "Go back a step, then hide" },
+      { keys: ["⇧esc"], title: "Close everything and hide" },
     ],
   },
   {
@@ -765,6 +766,17 @@ export default function App() {
 
   // Selecting text in the chat moves focus off the input; the panel's keys should still work.
   function onWindowKeyDown(e: KeyboardEvent) {
+    // ⇧Esc: every Esc step at once (close the screen, clear the input, close the chat), then hide.
+    if (e.shiftKey && e.key === "Escape") {
+      e.preventDefault();
+      setOverlay("none");
+      setDraft("");
+      setAttachments([]);
+      autosize();
+      if (mode() === "chat") reset();
+      win.hide();
+      return;
+    }
     // ⌘N works from every screen, history, preferences and shortcuts included.
     if (e.metaKey && e.key === "n") {
       e.preventDefault();
