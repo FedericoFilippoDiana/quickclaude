@@ -7,15 +7,20 @@
 //        {type:"history"}                                list past sessions
 //        {type:"open", id, turn}                         reopen a past session
 //        {type:"handoff"}                                continue the session in a terminal
+//        {type:"compact", turn}                          shrink the open chat's context (/compact)
 //        {type:"choice", model, effort}                  remember the picked model and effort
 //        {type:"delete", id}                             delete a past session from Claude Code
+//        {type:"pin", ids, pinned}                       pin or unpin chats in history
 //   out: {type:"ready"} | {type:"models", models, defaultModel, defaultEffort, chosen} | {type:"session", id}
 //        {type:"delta", turn, text} | {type:"tool", turn, name} | {type:"done", turn, ...}
 //        {type:"history", sessions} | {type:"deleted", id} | {type:"transcript", id, turn, messages}
 //        {type:"tasks", turn, count}  background tasks of the open chat
-//        {type:"wake", turn}          the open chat started a turn on its own (a background task finished)
+//        {type:"wake", turn, compacting?}  the open chat has a turn running that you didn't just start
+//                                     (a background task finished, or a reopened chat is mid-turn or mid-/compact)
 //        {type:"activity", ids}       chats with a turn or background task running
 //        {type:"notify", id, title, text, current}  a chat finished; the shell alerts you if you're away
+//        {type:"compacted", turn, before, after}  context tokens around a /compact
+//        {type:"context", turn, tokens}  the open chat's context size, as /context counts it
 //        {type:"handoff", id} | {type:"error", turn?, message}
 //
 // Auth comes from the local `claude` login (your Claude subscription).
@@ -152,6 +157,8 @@ async function createSession(resume) {
     tasks: 0, // live background tasks (shell commands, agents, monitors)
     replyDue: null, // timer: a task just finished and Claude is about to reply to it
     woke: false, // this turn started on its own, not from a question
+    compacting: false, // this turn is a /compact, not an answer
+    compactedFrom: 0, // context tokens before the /compact that just ran
     parked: false, // no longer on screen, kept alive until its work ends
     reply: "", // text of the current turn, for a notification
     model: "", // "" = your default
@@ -284,6 +291,38 @@ async function ask({ text, images, followUp, turn, model, effort }) {
   s.input.push(content(text, images));
 }
 
+// /compact in the same session: Claude Code swaps the history for a summary and carries on.
+function compact({ turn }) {
+  const s = current;
+  if (!s?.id) {
+    emit({ type: "error", message: "Ask something first; there's no chat to compact yet." });
+    return;
+  }
+  if (working(s)) {
+    emit({ type: "error", message: "Wait for the chat to finish before compacting it." });
+    return;
+  }
+  s.turn = turn;
+  s.inTurn = true;
+  s.compacting = true;
+  s.reply = "";
+  broadcast();
+  s.input.push("/compact");
+}
+
+// The chat's context size (what /context shows), for the gauge next to the model label.
+// Right after a /compact the quick estimate is stale, so count it fully and report the drop.
+async function reportContext(s, compactedFrom) {
+  const turn = s.turn;
+  let tokens = null;
+  try {
+    ({ totalTokens: tokens } = await s.q.getContextUsage({ detail: compactedFrom ? "full" : "summary" }));
+  } catch {}
+  if (s !== current) return;
+  if (compactedFrom) emit({ type: "compacted", turn, before: compactedFrom, after: tokens });
+  if (tokens !== null) emit({ type: "context", turn, tokens });
+}
+
 async function pump(s) {
   const onScreen = () => s === current;
   try {
@@ -302,6 +341,9 @@ async function pump(s) {
         if (onScreen()) emit({ type: "tasks", turn: s.turn, count: s.tasks + (s.replyDue ? 1 : 0) });
         broadcast();
         if (s.parked && !working(s)) closeSession(s);
+      } else if (m.type === "system" && m.subtype === "compact_boundary") {
+        // post_tokens counts only the messages, so the size after is measured when the turn ends.
+        s.compactedFrom = m.compact_metadata.pre_tokens;
       } else if (m.type === "stream_event" && !m.parent_tool_use_id) {
         const ev = m.event;
         if (ev.type === "message_start" && !s.inTurn) {
@@ -327,6 +369,7 @@ async function pump(s) {
         }
       } else if (m.type === "result") {
         if (onScreen()) {
+          reportContext(s, s.compacting && s.compactedFrom);
           emit({
             type: "done",
             turn: s.turn,
@@ -338,12 +381,16 @@ async function pump(s) {
           });
         }
         const text = (s.reply || m.result || "").trim();
+        const compacted = s.compacting;
         s.inTurn = false;
         s.woke = false;
         s.hadText = false;
+        s.compacting = false;
+        s.compactedFrom = 0;
         // Fully finished (nothing left running in the background): the shell decides whether
         // you're looking at it, and otherwise plays a sound, notifies or brings the chat forward.
-        if (s.id && !working(s)) emit({ type: "notify", id: s.id, title: s.title ?? "", text, current: onScreen() });
+        // A finished /compact has no reply to tell you about.
+        if (s.id && !compacted && !working(s)) emit({ type: "notify", id: s.id, title: s.title ?? "", text, current: onScreen() });
         broadcast();
         if (s.parked && !working(s)) closeSession(s);
         // Start the next spare once this answer is out, so it never competes with it.
@@ -366,17 +413,45 @@ async function pump(s) {
 // Titles of listed chats, so a reopened chat can name its terminal workspace.
 const titles = new Map();
 
+// Pinned chats: id -> when it was pinned. They head the history list, newest pin first.
+const PINS_FILE = join(HOME, "Library", "Application Support", "QuickClaude", "pins.json");
+
+function readPins() {
+  try {
+    return JSON.parse(readFileSync(PINS_FILE, "utf8"));
+  } catch {
+    return {};
+  }
+}
+
+function writePins(pins) {
+  try {
+    mkdirSync(join(PINS_FILE, ".."), { recursive: true });
+    writeFileSync(PINS_FILE, JSON.stringify(pins));
+  } catch {}
+}
+
+function pin({ ids, pinned }) {
+  const pins = readPins();
+  const now = Date.now();
+  // The first id is the one you're on; it goes to the very top.
+  ids.forEach((id, i) => (pinned ? (pins[id] = now - i) : delete pins[id]));
+  writePins(pins);
+}
+
 async function history() {
   try {
     const sessions = await listSessions({ dir: WORK_DIR, includeWorktrees: false });
+    const pins = readPins();
     const rows = sessions
-      .sort((a, b) => b.lastModified - a.lastModified)
-      .slice(0, 300)
       .map((s) => ({
         id: s.sessionId,
         title: s.customTitle || s.summary || s.firstPrompt || "(untitled)",
         at: s.lastModified,
-      }));
+        pinned: pins[s.sessionId] ?? 0,
+      }))
+      .sort((a, b) => b.pinned - a.pinned || b.at - a.at)
+      .slice(0, 300);
     for (const r of rows) titles.set(r.id, r.title);
     emit({ type: "history", sessions: rows });
   } catch (e) {
@@ -394,6 +469,11 @@ async function remove(id) {
   try {
     await deleteSession(id, { dir: WORK_DIR });
     titles.delete(id);
+    const pins = readPins();
+    if (id in pins) {
+      delete pins[id];
+      writePins(pins);
+    }
     emit({ type: "deleted", id });
   } catch (e) {
     emit({ type: "error", message: `Couldn't delete that chat: ${e.message}` });
@@ -402,6 +482,8 @@ async function remove(id) {
 
 // Claude Code stores harness notes as user messages; keep only what a person typed.
 const NOISE = /^(<command-|<local-command-|<system-reminder>|<task-notification>|Caveat: )/;
+// A compacted chat's transcript starts from this summary; the earlier messages aren't returned.
+const SUMMARY = /^This session is being continued from a previous conversation/;
 
 function toChat(messages) {
   const chat = [];
@@ -416,6 +498,10 @@ function toChat(messages) {
       .trim();
     const images = blocks.filter((b) => b.type === "image").length;
     if (!text && !images) continue;
+    if (m.type === "user" && SUMMARY.test(text)) {
+      chat.push({ role: "assistant", text: "_Earlier messages were compacted._", images: 0 });
+      continue;
+    }
     const prev = chat[chat.length - 1];
     if (m.type === "assistant" && prev?.role === "assistant") prev.text += `\n\n${text}`;
     else chat.push({ role: m.type, text, images });
@@ -439,7 +525,8 @@ async function open({ id, turn }) {
       running.woke = false;
       current = running;
       emit({ type: "tasks", turn, count: running.tasks });
-      if (running.inTurn) emit({ type: "wake", turn });
+      if (running.inTurn) emit({ type: "wake", turn, compacting: running.compacting });
+      reportContext(running);
       return;
     }
     const s = await createSession(id);
@@ -448,6 +535,7 @@ async function open({ id, turn }) {
     s.title = titles.get(id);
     activate(s);
     broadcast();
+    reportContext(s);
   } catch (e) {
     emit({ type: "error", turn, message: `Couldn't open that chat: ${e.message}` });
   }
@@ -541,8 +629,10 @@ createInterface({ input: process.stdin }).on("line", (line) => {
   else if (cmd.type === "history") history();
   else if (cmd.type === "open") open(cmd);
   else if (cmd.type === "handoff") handoff();
+  else if (cmd.type === "compact") compact(cmd);
   else if (cmd.type === "choice") saveChoice(cmd);
   else if (cmd.type === "delete") remove(cmd.id);
+  else if (cmd.type === "pin") pin(cmd);
 });
 
 process.stdin.on("end", () => {

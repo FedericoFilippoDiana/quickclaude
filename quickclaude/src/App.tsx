@@ -28,7 +28,7 @@ type Msg = {
 };
 
 type Model = { value: string; name: string; efforts: string[] };
-type SessionRow = { id: string; title: string; at: number };
+type SessionRow = { id: string; title: string; at: number; pinned: number }; // pinned: when, 0 = not
 
 type AgentEvent =
   | { type: "ready" }
@@ -53,13 +53,21 @@ type AgentEvent =
       messages: { role: "user" | "assistant"; text: string; images: number }[];
     }
   | { type: "handoff"; id: string }
+  | { type: "compacted"; turn: number; before: number; after: number | null }
+  | { type: "context"; turn: number; tokens: number }
   | { type: "tasks"; turn: number; count: number }
-  | { type: "wake"; turn: number }
+  | { type: "wake"; turn: number; compacting?: boolean }
   | { type: "activity"; ids: string[] }
   | { type: "notify" }
   | { type: "error"; turn?: number; message: string };
 
 const send = (cmd: object) => invoke("agent_send", { line: JSON.stringify(cmd) });
+
+// The context gauge shows from CONTEXT_WARN tokens, and turns red from CONTEXT_HIGH.
+const CONTEXT_WARN = 100_000;
+const CONTEXT_HIGH = 200_000;
+
+const tokens = (n: number) => (n < 1000 ? `${n}` : `${(n / 1000).toFixed(n < 10_000 ? 1 : 0)}k`);
 
 function ago(ms: number) {
   const s = (Date.now() - ms) / 1000;
@@ -197,6 +205,7 @@ const KEY_SECTIONS: { title: string; rows: { keys: string[]; title: string }[] }
       { keys: ["↩"], title: "Open it" },
       { keys: ["⇧↑", "⇧↓"], title: "Select several (or ⇧click, ⌘click)" },
       { keys: ["⌘A"], title: "Select all" },
+      { keys: ["⌘P"], title: "Pin or unpin (pinned chats stay on top)" },
       { keys: ["⌫"], title: "Delete (press twice)" },
       { keys: ["esc"], title: "Clear the selection, then close" },
     ],
@@ -233,6 +242,8 @@ export default function App() {
   // Background tasks of the open chat, and every chat with something running (history lamps).
   const [tasks, setTasks] = createSignal(0);
   const [active, setActive] = createSignal<Set<string>>(new Set());
+  // The open chat's context size; unknown (null) until its first turn here.
+  const [context, setContext] = createSignal<number | null>(null);
   // Busy, or waiting on background work that will reply by itself.
   const working = () => busy() || tasks() > 0;
   let turn = 0;
@@ -284,9 +295,13 @@ export default function App() {
   }
 
   // --- history ---
+  // Pinned chats first (newest pin on top), then the rest by last activity.
+  const ordered = createMemo(() =>
+    [...(sessions() ?? [])].sort((a, b) => b.pinned - a.pinned || (a.pinned ? 0 : b.at - a.at)),
+  );
   const filtered = createMemo(() => {
     const q = draft().trim().toLowerCase();
-    const all = sessions() ?? [];
+    const all = ordered();
     return q ? all.filter((s) => s.title.toLowerCase().includes(q)) : all;
   });
   // Chats picked with ⇧↑↓, ⇧click, ⌘click or ⌘A; empty means just the row under the cursor.
@@ -346,6 +361,51 @@ export default function App() {
     const i = selected();
     if (overlay() === "history") historyList?.children[i]?.scrollIntoView({ block: "nearest" });
   });
+
+  // Rows that change place slide from where they were to where they land (FLIP).
+  function flip(change: () => void, lift: Set<string>) {
+    const rows = () => [...(historyList?.querySelectorAll<HTMLElement>("[data-id]") ?? [])];
+    const before = new Map(rows().map((el) => [el.dataset.id!, el.getBoundingClientRect().top]));
+    change();
+    if (matchMedia("(prefers-reduced-motion: reduce)").matches) return;
+    for (const el of rows()) {
+      const from = before.get(el.dataset.id!);
+      const dy = from === undefined ? 0 : from - el.getBoundingClientRect().top;
+      if (Math.abs(dy) < 1) continue;
+      // The pinned rows pass over the others on their way up.
+      if (lift.has(el.dataset.id!)) el.classList.add("lifted");
+      el.animate([{ transform: `translateY(${dy}px)` }, { transform: "none" }], {
+        duration: 420,
+        easing: "cubic-bezier(0.3, 0.7, 0.3, 1)",
+      }).finished.then(
+        () => el.classList.remove("lifted"),
+        () => el.classList.remove("lifted"),
+      );
+    }
+  }
+
+  // ⌘P pins the chat under the cursor (or the selected ones); if all are pinned, it unpins them.
+  // Their "when" column says "Pinned" or "Unpinned" for a moment.
+  const [pinFlash, setPinFlash] = createSignal<{ ids: Set<string>; pinned: boolean } | null>(null);
+  let pinTimer = 0;
+  function togglePin() {
+    const rows = targets();
+    if (!rows.length) return;
+    const pinned = rows.some((r) => !r.pinned);
+    const ids = rows.map((r) => r.id);
+    const now = Date.now();
+    flip(() => {
+      setSessions((all) =>
+        all?.map((r) => (ids.includes(r.id) ? { ...r, pinned: pinned ? now - ids.indexOf(r.id) : 0 } : r)) ?? null,
+      );
+      // The cursor follows the chat it was on.
+      setSelected(Math.max(filtered().findIndex((r) => r.id === ids[0]), 0));
+    }, new Set(pinned ? ids : []));
+    setPinFlash({ ids: new Set(ids), pinned });
+    clearTimeout(pinTimer);
+    pinTimer = window.setTimeout(() => setPinFlash(null), 1400);
+    send({ type: "pin", ids, pinned });
+  }
 
   function deleteSelected() {
     const rows = targets();
@@ -442,6 +502,7 @@ export default function App() {
     setSessionId(row.id);
     setChatTitle(row.title);
     setTasks(0);
+    setContext(null);
     setMode("chat");
     send({ type: "open", id: row.id, turn });
   }
@@ -496,15 +557,18 @@ export default function App() {
       case "activity":
         setActive(new Set(ev.ids));
         break;
-      case "wake":
-        // Claude carries on by itself (a background task finished): continue its last answer.
+      case "wake": {
+        // Claude carries on by itself (a background task finished), or a reopened chat is
+        // mid-turn: continue its last answer. A /compact gets its own line, as when the chip started it.
         flush();
-        if (lastAnswer()?.role === "assistant") {
+        const status = ev.compacting ? "Compacting…" : "Working…";
+        if (lastAnswer()?.role === "assistant" && !ev.compacting) {
           if (lastAnswer().text) pending = "\n\n";
-          setMessages(last(), { status: "Working…", meta: undefined, error: undefined });
-        } else setMessages(messages.length, { role: "assistant", text: "", status: "Working…" });
+          setMessages(last(), { status, meta: undefined, error: undefined });
+        } else setMessages(messages.length, { role: "assistant", text: "", status });
         setBusy(true);
         break;
+      }
       case "deleted":
         setSessions((all) => all?.filter((s) => s.id !== ev.id) ?? null);
         // The open chat was the one deleted: it no longer exists to follow up on.
@@ -515,12 +579,25 @@ export default function App() {
           setBusy(false);
           setMode("compact");
           setSessionId(null);
+          setContext(null);
         }
         break;
       case "transcript":
         setMessages(
           ev.messages.map((m) => ({ role: m.role, text: m.text, imageCount: m.images || undefined })),
         );
+        break;
+      case "compacted":
+        setMessages(
+          last(),
+          "text",
+          ev.after === null
+            ? `_Compacted from ${tokens(ev.before)} tokens._`
+            : `_Compacted: ${tokens(ev.before)} → ${tokens(ev.after)} tokens._`,
+        );
+        break;
+      case "context":
+        setContext(ev.tokens);
         break;
       case "handoff":
         clear();
@@ -549,6 +626,7 @@ export default function App() {
       setSessionId(null);
       setChatTitle("");
       setTasks(0);
+      setContext(null);
     }
     setMessages(messages.length, { role: "user", text, images: images.map((i) => i.url) });
     setMessages(messages.length, { role: "assistant", text: "", status: "Thinking…" });
@@ -571,6 +649,7 @@ export default function App() {
   function clear() {
     turn++;
     setTasks(0);
+    setContext(null);
     setMessages([]);
     setBusy(false);
     setMode("compact");
@@ -598,6 +677,37 @@ export default function App() {
     if (!sessionId() || working()) return;
     send({ type: "handoff" });
   }
+
+  // /compact in the same session; the chat stays on screen with a note under it.
+  function compact() {
+    if (!sessionId() || working()) return;
+    turn++;
+    pending = "";
+    setMode("chat");
+    setMessages(messages.length, { role: "assistant", text: "", status: "Compacting…" });
+    setBusy(true);
+    setNotice("");
+    send({ type: "compact", turn });
+  }
+
+  // The context chip compacts on a second click; the first asks "Compact 398k?".
+  // Esc, typing, another chat or 5 s without the second click cancel it.
+  const [compactArmed, setCompactArmed] = createSignal(false);
+  let compactTimer = 0;
+  function disarmCompact() {
+    clearTimeout(compactTimer);
+    setCompactArmed(false);
+  }
+  function onChipClick() {
+    if (compactArmed()) {
+      disarmCompact();
+      compact();
+    } else {
+      setCompactArmed(true);
+      compactTimer = window.setTimeout(() => setCompactArmed(false), 5000);
+    }
+  }
+  createEffect(on([draft, sessionId], disarmCompact, { defer: true }));
 
   async function onPaste(e: ClipboardEvent) {
     const items = [...(e.clipboardData?.items ?? [])];
@@ -630,6 +740,9 @@ export default function App() {
       } else if (e.metaKey && e.key === "a") {
         e.preventDefault();
         setPicked(new Set(filtered().map((r) => r.id)));
+      } else if (e.metaKey && e.key === "p") {
+        e.preventDefault();
+        togglePin();
       } else if (e.key === "Enter") {
         e.preventDefault();
         openSession(filtered()[selected()]);
@@ -655,9 +768,11 @@ export default function App() {
       e.preventDefault();
       showHistory();
     } else if (e.key === "Escape") {
-      // One step back per press: clear what's typed (and pasted), close the chat, then hide.
+      // One step back per press: cancel an asked compact, clear what's typed (and pasted),
+      // close the chat, then hide.
       e.preventDefault();
-      if (draft() || attachments().length) {
+      if (compactArmed()) disarmCompact();
+      else if (draft() || attachments().length) {
         setDraft("");
         setAttachments([]);
         autosize();
@@ -809,7 +924,7 @@ export default function App() {
     if (overlay() === "prefs") return onPrefsKey(e);
     if (overlay() === "keys") return onKeysKey(e);
     if (e.target === input) return;
-    const panelKey = e.key === "Escape" || e.key === "Tab" || (e.metaKey && ["t", "."].includes(e.key));
+    const panelKey = e.key === "Escape" || e.key === "Tab" || (e.metaKey && ["t", ".", "p"].includes(e.key));
     if (!panelKey) return;
     window.getSelection()?.removeAllRanges();
     input.focus();
@@ -830,7 +945,7 @@ export default function App() {
         if (e.payload.type === "drop") insertPaths(e.payload.paths);
       }),
       listen<string>("open-chat", (e) => {
-        if (sessionId() !== e.payload) openSession({ id: e.payload, title: "", at: 0 });
+        if (sessionId() !== e.payload) openSession({ id: e.payload, title: "", at: 0, pinned: 0 });
         else setMode("chat");
       }),
       listen("panel-shown", () => {
@@ -1062,6 +1177,7 @@ export default function App() {
             {(row, i) => (
               <button
                 class="row"
+                data-id={row.id}
                 classList={{
                   selected: i() === selected(),
                   picked: picked().has(row.id),
@@ -1073,10 +1189,19 @@ export default function App() {
                 <Show when={active().has(row.id)}>
                   <span class="lamp" title="Working" />
                 </Show>
+                <Show when={row.pinned}>
+                  <svg class="pin" viewBox="0 0 16 16" aria-label="Pinned">
+                    <path d="M10.5 1.5l4 4-2 1-2.5 2.5.5 3.5-1.5 1.5-3-3L2 15l-.5-.5 4-4-3-3L4 6l3.5.5L10 4z" />
+                  </svg>
+                </Show>
                 <span class="title">{row.title}</span>
-                <span class="when">
+                <span class="when" classList={{ flash: !!pinFlash()?.ids.has(row.id) && !(armed() && isTarget(row.id)) }}>
                   {!(armed() && isTarget(row.id))
-                    ? ago(row.at)
+                    ? pinFlash()?.ids.has(row.id)
+                      ? pinFlash()!.pinned
+                        ? "Pinned"
+                        : "Unpinned"
+                      : ago(row.at)
                     : targets()[0]?.id !== row.id
                       ? "delete"
                       : targets().length > 1
@@ -1134,6 +1259,22 @@ export default function App() {
         >
           <div class="chat-head">
             <span class="chat-name">{chatName()}</span>
+            <Show when={(context() ?? 0) >= CONTEXT_WARN}>
+              <button
+                class="context"
+                classList={{ high: context()! >= CONTEXT_HIGH, armed: compactArmed() }}
+                title={compactArmed() ? "Click again to compact this chat. Esc cancels." : "Context size of this chat. Click to compact it."}
+                onClick={onChipClick}
+              >
+                <span class="grow">
+                  <span>Compact&nbsp;</span>
+                </span>
+                {tokens(context()!)}
+                <span class="grow">
+                  <span>?</span>
+                </span>
+              </button>
+            </Show>
           </div>
           <div class="list" ref={list}>
             <For each={messages}>

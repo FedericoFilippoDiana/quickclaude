@@ -5,8 +5,10 @@
   --line: rgba(255, 255, 255, 0.1);
   --accent: #d97757;
   --error: #ff8a80;
+  --warn: #e0a03c;
   --code-bg: rgba(0, 0, 0, 0.3);
   --bg: rgba(22, 22, 24, 0.82);
+  --panel-solid: rgb(46, 46, 50);
   --hover: rgba(255, 255, 255, 0.08);
   --hover-soft: rgba(255, 255, 255, 0.06);
   --dot: rgba(255, 255, 255, 0.25);
@@ -28,8 +30,10 @@
     --line: rgba(0, 0, 0, 0.1);
     --accent: #c4613f;
     --error: #c62828;
+    --warn: #a3660a;
     --code-bg: rgba(0, 0, 0, 0.06);
     --bg: rgba(248, 248, 250, 0.85);
+    --panel-solid: rgb(236, 236, 240);
     --hover: rgba(0, 0, 0, 0.06);
     --hover-soft: rgba(0, 0, 0, 0.045);
     --dot: rgba(0, 0, 0, 0.2);
@@ -194,6 +198,72 @@ textarea::placeholder {
 
 .stop:hover {
   color: var(--text);
+}
+
+/* --- context gauge (chat title bar, right): shows once a chat is long, red when very long; click compacts --- */
+
+.context {
+  --tone: var(--warn);
+  margin-left: 12px;
+  padding: 1px 7px;
+  border-radius: 999px;
+  font-size: 13px;
+  line-height: 18px;
+  white-space: nowrap;
+  flex-shrink: 0;
+  display: inline-flex;
+  align-items: baseline;
+  color: var(--tone);
+  background: color-mix(in srgb, var(--tone) 14%, transparent);
+  box-shadow: inset 0 0 0 1px transparent;
+  transition:
+    background 0.28s ease,
+    box-shadow 0.28s ease,
+    padding 0.32s cubic-bezier(0.3, 0.7, 0.3, 1);
+}
+
+.context.high {
+  --tone: var(--error);
+}
+
+.context:hover {
+  filter: brightness(1.15);
+}
+
+/* Asking to compact: "398k" opens out to "Compact 398k?" and the pill firms up. */
+.context.armed {
+  padding: 1px 10px;
+  background: color-mix(in srgb, var(--tone) 24%, transparent);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--tone) 60%, transparent);
+}
+
+.context .grow {
+  display: inline-grid;
+  grid-template-columns: 0fr;
+  opacity: 0;
+  transition:
+    grid-template-columns 0.32s cubic-bezier(0.3, 0.7, 0.3, 1),
+    opacity 0.2s ease;
+}
+
+.context .grow > span {
+  min-width: 0;
+  overflow: hidden;
+}
+
+.context.armed .grow {
+  grid-template-columns: 1fr;
+  opacity: 1;
+  transition:
+    grid-template-columns 0.32s cubic-bezier(0.3, 0.7, 0.3, 1),
+    opacity 0.24s ease 0.08s;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .context,
+  .context .grow {
+    transition: none;
+  }
 }
 
 /* --- model label: Tab cycles the model, ⇧Tab the effort --- */
@@ -367,6 +437,44 @@ textarea::placeholder {
 
 .row.armed .when {
   color: var(--error);
+}
+
+/* "Pinned" / "Unpinned" for a moment after ⌘P. */
+.row .when.flash {
+  color: var(--accent);
+  animation: label-in 0.18s ease-out;
+}
+
+.row .pin {
+  width: 13px;
+  height: 13px;
+  align-self: center;
+  flex-shrink: 0;
+  margin-right: -4px;
+  fill: var(--accent);
+  animation: pin-in 0.32s cubic-bezier(0.3, 0.7, 0.3, 1.4);
+}
+
+@keyframes pin-in {
+  from {
+    opacity: 0;
+    transform: scale(0.4) rotate(-30deg);
+  }
+}
+
+/* A row being pinned slides up over the others, on a solid backing so they don't show through. */
+.row.lifted {
+  position: relative;
+  z-index: 1;
+  background: var(--panel-solid);
+  box-shadow: 0 6px 18px rgba(0, 0, 0, 0.18);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .row .pin,
+  .row .when.flash {
+    animation: none;
+  }
 }
 
 .pad {
