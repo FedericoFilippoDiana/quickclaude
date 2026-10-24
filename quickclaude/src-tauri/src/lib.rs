@@ -210,9 +210,19 @@ fn panel(app: &AppHandle) -> WebviewWindow {
 }
 
 /// Where the panel goes. The first show centres it; after that it reopens where it was left,
-/// dragged or not (until the app restarts).
+/// dragged or not (until the app restarts), unless it is fresh.
 #[derive(Default)]
 struct Placed(AtomicBool);
+
+/// Set by the UI: the panel shows only an empty input (no answer, chat, screen or draft).
+/// A fresh panel always reopens centred.
+#[derive(Default)]
+struct Fresh(AtomicBool);
+
+#[tauri::command]
+fn set_fresh(fresh: bool, state: tauri::State<Fresh>) {
+    state.0.store(fresh, Ordering::Relaxed);
+}
 
 /// Spotlight-style placement on the panel's screen: horizontally centred, a fifth of the way down.
 fn centre(window: &WebviewWindow) -> Option<PhysicalPosition<i32>> {
@@ -262,8 +272,11 @@ fn center_panel(app: AppHandle) {
 
 fn show_panel(app: &AppHandle) {
     let window = panel(app);
-    // Shown before: a hidden window keeps its position (and full screen its size), so leave it.
-    if !app.state::<Placed>().0.swap(true, Ordering::Relaxed) {
+    // Shown before: a hidden window keeps its position (and full screen its size), so leave it,
+    // unless it holds nothing but an empty input.
+    let first = !app.state::<Placed>().0.swap(true, Ordering::Relaxed);
+    let fresh = app.state::<Fresh>().0.load(Ordering::Relaxed) && app.state::<Full>().0.lock().unwrap().is_none();
+    if first || fresh {
         if let Some(at) = centre(&window) {
             let _ = window.set_position(at);
         }
@@ -366,11 +379,12 @@ pub fn run() {
         )
         .manage(Agent::default())
         .manage(Placed::default())
+        .manage(Fresh::default())
         .manage(Glide::default())
         .manage(OnTop::default())
         .manage(Full::default())
         .manage(Mutex::new(load_prefs()))
-        .invoke_handler(tauri::generate_handler![agent_send, get_prefs, set_prefs, preview_sound, set_on_top, set_full, center_panel])
+        .invoke_handler(tauri::generate_handler![agent_send, get_prefs, set_prefs, preview_sound, set_on_top, set_full, center_panel, set_fresh])
         .setup(move |app| {
             // Menu-bar app: no Dock icon, no app switcher entry.
             #[cfg(target_os = "macos")]

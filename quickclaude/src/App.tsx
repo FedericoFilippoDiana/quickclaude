@@ -183,7 +183,7 @@ const KEY_SECTIONS: { title: string; rows: { keys: string[]; title: string }[] }
       { keys: ["⇥"], title: "Next model" },
       { keys: ["⇧⇥"], title: "Next effort" },
       { keys: ["esc"], title: "Go back a step, then hide" },
-      { keys: ["⇧esc"], title: "Close everything and hide" },
+      { keys: ["⇧esc"], title: "Hide, keeping everything as it is" },
     ],
   },
   {
@@ -825,6 +825,12 @@ export default function App() {
     }
   }
 
+  // Nothing but an empty input: the shell reopens a fresh panel centred, wherever it was left.
+  const fresh = createMemo(
+    () => mode() === "compact" && messages.length === 0 && overlay() === "none" && !draft() && attachments().length === 0,
+  );
+  createEffect(() => invoke("set_fresh", { fresh: fresh() }));
+
   // Files dropped on the panel go into the input as their full paths, at the cursor.
   function insertPaths(paths: string[]) {
     if (!paths.length) return;
@@ -879,19 +885,17 @@ export default function App() {
     if (mode() === "chat" && list) list.scrollTop = list.scrollHeight;
   });
 
+  // ⇧Esc: hide and change nothing, so the panel reopens exactly as it was. Caught while
+  // capturing, before the input's and history's own Esc steps can run.
+  function onShiftEsc(e: KeyboardEvent) {
+    if (!e.shiftKey || e.key !== "Escape") return;
+    e.preventDefault();
+    e.stopPropagation();
+    win.hide();
+  }
+
   // Selecting text in the chat moves focus off the input; the panel's keys should still work.
   function onWindowKeyDown(e: KeyboardEvent) {
-    // ⇧Esc: every Esc step at once (close the screen, clear the input, close the chat), then hide.
-    if (e.shiftKey && e.key === "Escape") {
-      e.preventDefault();
-      setOverlay("none");
-      setDraft("");
-      setAttachments([]);
-      autosize();
-      if (mode() === "chat") reset();
-      win.hide();
-      return;
-    }
     // ⌘N works from every screen, history, preferences and shortcuts included.
     if (e.metaKey && e.key === "n") {
       e.preventDefault();
@@ -932,8 +936,12 @@ export default function App() {
   }
 
   onMount(() => {
+    window.addEventListener("keydown", onShiftEsc, true);
     window.addEventListener("keydown", onWindowKeyDown);
-    onCleanup(() => window.removeEventListener("keydown", onWindowKeyDown));
+    onCleanup(() => {
+      window.removeEventListener("keydown", onShiftEsc, true);
+      window.removeEventListener("keydown", onWindowKeyDown);
+    });
     const observer = new ResizeObserver(fit);
     observer.observe(panel);
     const unlisten = Promise.all([
