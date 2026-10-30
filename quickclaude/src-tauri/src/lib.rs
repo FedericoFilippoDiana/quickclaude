@@ -40,11 +40,13 @@ struct Prefs {
     notification: bool,
     /// "system", "light" or "dark".
     theme: String,
+    /// Scale for every font size in the panel; 1 is the default.
+    text_size: f64,
 }
 
 impl Default for Prefs {
     fn default() -> Self {
-        Self { bring_forward: false, sound: true, notification: true, theme: "system".into() }
+        Self { bring_forward: false, sound: true, notification: true, theme: "system".into(), text_size: 1.0 }
     }
 }
 
@@ -114,6 +116,10 @@ fn notify(app: &AppHandle, line: &str) {
     let on_screen = msg["current"].as_bool().unwrap_or(false) && panel(app).is_visible().unwrap_or(false);
     if on_screen {
         return;
+    }
+    // Remembered by the panel, so the shortcut takes you to the reply instead of a new chat.
+    if let Some(id) = msg["id"].as_str() {
+        let _ = panel(app).emit("unseen", id);
     }
     let prefs = app.state::<Mutex<Prefs>>().lock().unwrap().clone();
     if prefs.sound {
@@ -225,7 +231,8 @@ fn set_fresh(fresh: bool, state: tauri::State<Fresh>) {
 }
 
 /// Spotlight-style placement on the panel's screen: horizontally centred, a fifth of the way down.
-fn centre(window: &WebviewWindow) -> Option<PhysicalPosition<i32>> {
+/// `width` (logical) is the size the panel is about to take, if it is changing; else its current one.
+fn centre(window: &WebviewWindow, width: Option<f64>) -> Option<PhysicalPosition<i32>> {
     let monitor = window
         .current_monitor()
         .ok()
@@ -234,10 +241,12 @@ fn centre(window: &WebviewWindow) -> Option<PhysicalPosition<i32>> {
     let scale = monitor.scale_factor();
     let pos = monitor.position().to_logical::<f64>(scale);
     let size = monitor.size().to_logical::<f64>(scale);
-    let width = window
-        .outer_size()
-        .map(|s| s.to_logical::<f64>(scale).width)
-        .unwrap_or(720.0);
+    let width = width.unwrap_or_else(|| {
+        window
+            .outer_size()
+            .map(|s| s.to_logical::<f64>(scale).width)
+            .unwrap_or(720.0)
+    });
     let at = LogicalPosition::new(pos.x + (size.width - width) / 2.0, pos.y + size.height * 0.2);
     Some(at.to_physical(scale))
 }
@@ -248,9 +257,9 @@ struct Glide(AtomicU64);
 
 /// ⌘N: glide the panel back to the centre of its screen (ease-out, about a fifth of a second).
 #[tauri::command]
-fn center_panel(app: AppHandle) {
+fn center_panel(app: AppHandle, width: Option<f64>) {
     let window = panel(&app);
-    let (Some(to), Ok(from)) = (centre(&window), window.outer_position()) else { return };
+    let (Some(to), Ok(from)) = (centre(&window, width), window.outer_position()) else { return };
     if from == to {
         return;
     }
@@ -277,13 +286,44 @@ fn show_panel(app: &AppHandle) {
     let first = !app.state::<Placed>().0.swap(true, Ordering::Relaxed);
     let fresh = app.state::<Fresh>().0.load(Ordering::Relaxed) && app.state::<Full>().0.lock().unwrap().is_none();
     if first || fresh {
-        if let Some(at) = centre(&window) {
+        if let Some(at) = centre(&window, None) {
             let _ = window.set_position(at);
         }
     }
     let _ = window.show();
     let _ = window.set_focus();
     let _ = window.emit("panel-shown", ());
+}
+
+/// Grow or shrink the panel to `width`×`height` (logical), keeping its top edge, with AppKit's own
+/// resize animation: the blur, rounded corners and shadow are redrawn together on every frame.
+/// Returns once the animation is over.
+#[tauri::command]
+async fn animate_size(app: AppHandle, width: f64, height: f64) {
+    let window = panel(&app);
+    let target = window.clone();
+    let (done, wait) = std::sync::mpsc::channel();
+    let ran = window.run_on_main_thread(move || {
+        #[cfg(target_os = "macos")]
+        if let Ok(ptr) = target.ns_window() {
+            use objc2::{msg_send, runtime::AnyObject};
+            use objc2_foundation::{NSPoint, NSRect, NSSize};
+            unsafe {
+                let ns = &*(ptr as *const AnyObject);
+                let frame: NSRect = msg_send![ns, frame];
+                let top = frame.origin.y + frame.size.height;
+                let to = NSRect::new(NSPoint::new(frame.origin.x, top - height), NSSize::new(width, height));
+                let () = msg_send![ns, setFrame: to, display: true, animate: true];
+                let () = msg_send![ns, invalidateShadow];
+            }
+        }
+        #[cfg(not(target_os = "macos"))]
+        let _ = target.set_size(LogicalSize::new(width, height));
+        let _ = done.send(());
+    });
+    if ran.is_ok() {
+        let _ = wait.recv();
+    }
 }
 
 /// Keep on top (⌘P in the panel): the panel stays up when it loses focus.
@@ -384,11 +424,20 @@ pub fn run() {
         .manage(OnTop::default())
         .manage(Full::default())
         .manage(Mutex::new(load_prefs()))
-        .invoke_handler(tauri::generate_handler![agent_send, get_prefs, set_prefs, preview_sound, set_on_top, set_full, center_panel, set_fresh])
+        .invoke_handler(tauri::generate_handler![agent_send, get_prefs, set_prefs, preview_sound, set_on_top, set_full, center_panel, set_fresh, animate_size])
         .setup(move |app| {
             // Menu-bar app: no Dock icon, no app switcher entry.
             #[cfg(target_os = "macos")]
             app.set_activation_policy(tauri::ActivationPolicy::Accessory);
+            // AppKit's resize animation takes this long per 150 points: brisk, a fifth of a second
+            // from the bar to the chat.
+            #[cfg(target_os = "macos")]
+            unsafe {
+                use objc2::msg_send;
+                use objc2_foundation::{NSString, NSUserDefaults};
+                let defaults = NSUserDefaults::standardUserDefaults();
+                let () = msg_send![&defaults, setDouble: 0.055f64, forKey: &*NSString::from_str("NSWindowResizeTime")];
+            }
 
             // ⌘⇧H continues the chat in a terminal, as a native menu key in place of the default
             // app menu's Hide items (⌘H itself is taken by AeroSpace, so no app ever sees it).

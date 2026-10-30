@@ -10,8 +10,9 @@ Most of my questions for Claude are quick ones, but asking meant switching to a 
 
 ## Using it
 
-- **⌥Space** shows or hides the panel.
-- **↩** asks a new question. **⌘↩** asks a follow-up and opens the chat view.
+- **⌥Space** shows or hides the panel. It opens on a new chat, unless a reply you haven't seen is waiting.
+- **↩** asks, continuing the chat on screen. **⌘N** starts a new chat.
+- **Space** on a new, empty chat opens your last chat; **Space Space** opens all your chats. Click the spark (or **↓**) for all your chats.
 - **Tab** switches the model, **⇧Tab** switches the effort. Your choice is remembered.
 - **↓** on an empty input browses your past QuickClaude chats. Select several with **⇧↑↓**, **⇧click**, **⌘click** or **⌘A**, and press **⌫** twice to delete them.
 - **⌘V** pastes an image into the question.

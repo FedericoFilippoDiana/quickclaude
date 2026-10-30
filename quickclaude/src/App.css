@@ -16,7 +16,9 @@
   --switch-off: rgba(255, 255, 255, 0.16);
   /* Extra side padding that centres a reading column; non-zero only in full screen. */
   --col: 0px;
-  font: 450 21px/1.55 -apple-system, BlinkMacSystemFont, "SF Pro Text", system-ui, sans-serif;
+  /* Text size scale (Preferences → Text size). */
+  --ts: 1;
+  font: 450 calc(21px * var(--ts))/1.55 -apple-system, BlinkMacSystemFont, "SF Pro Text", system-ui, sans-serif;
   color: var(--text);
   -webkit-font-smoothing: antialiased;
 }
@@ -149,6 +151,7 @@ button {
   margin-top: 7px;
   fill: var(--accent);
   flex-shrink: 0;
+  cursor: pointer;
 }
 
 textarea {
@@ -158,7 +161,7 @@ textarea {
   outline: 0;
   background: transparent;
   color: var(--text);
-  font: 33px/42px -apple-system, BlinkMacSystemFont, "SF Pro Display", system-ui, sans-serif;
+  font: calc(33px * var(--ts))/calc(42px * var(--ts)) -apple-system, BlinkMacSystemFont, "SF Pro Display", system-ui, sans-serif;
   font-weight: 400;
   padding: 0;
   max-height: 240px;
@@ -178,8 +181,8 @@ textarea::-webkit-scrollbar {
 }
 
 .chat textarea {
-  font-size: 24px;
-  line-height: 36px;
+  font-size: calc(24px * var(--ts));
+  line-height: calc(36px * var(--ts));
 }
 
 textarea::placeholder {
@@ -191,7 +194,7 @@ textarea::placeholder {
   height: 39px;
   border-radius: 50%;
   background: var(--faint);
-  font-size: 15px;
+  font-size: calc(15px * var(--ts));
   color: var(--muted);
   flex-shrink: 0;
 }
@@ -207,8 +210,8 @@ textarea::placeholder {
   margin-left: 12px;
   padding: 1px 7px;
   border-radius: 999px;
-  font-size: 13px;
-  line-height: 18px;
+  font-size: calc(13px * var(--ts));
+  line-height: calc(18px * var(--ts));
   white-space: nowrap;
   flex-shrink: 0;
   display: inline-flex;
@@ -270,7 +273,7 @@ textarea::placeholder {
 
 .model-label {
   margin-top: 5px;
-  font-size: 18px;
+  font-size: calc(18px * var(--ts));
   color: var(--muted);
   white-space: nowrap;
   flex-shrink: 0;
@@ -361,8 +364,8 @@ textarea::placeholder {
   border-radius: 50%;
   background: rgba(0, 0, 0, 0.6);
   color: #fff;
-  font-size: 18px;
-  line-height: 24px;
+  font-size: calc(18px * var(--ts));
+  line-height: calc(24px * var(--ts));
   opacity: 0;
 }
 
@@ -385,7 +388,7 @@ textarea::placeholder {
 }
 
 .image-count {
-  font-size: 18px;
+  font-size: calc(18px * var(--ts));
   color: var(--muted);
   margin-bottom: 4px;
 }
@@ -429,7 +432,7 @@ textarea::placeholder {
 }
 
 .row .when {
-  font-size: 18px;
+  font-size: calc(18px * var(--ts));
   color: var(--muted);
   flex-shrink: 0;
   font-variant-numeric: tabular-nums;
@@ -494,7 +497,7 @@ textarea::placeholder {
 
 .question {
   color: var(--muted);
-  font-size: 18px;
+  font-size: calc(18px * var(--ts));
   margin-bottom: 6px;
   white-space: nowrap;
   overflow: hidden;
@@ -506,7 +509,7 @@ textarea::placeholder {
   align-items: center;
   gap: 14px;
   padding: 8px calc(20px + var(--col)) 10px calc(54px + var(--col));
-  font-size: 18px;
+  font-size: calc(18px * var(--ts));
   color: var(--muted);
   min-height: 36px;
 }
@@ -528,7 +531,7 @@ textarea::placeholder {
   justify-content: space-between;
   align-items: center;
   padding: 10px calc(20px + var(--col));
-  font-size: 18px;
+  font-size: calc(18px * var(--ts));
   color: var(--muted);
   border-bottom: 1px solid var(--line);
 }
@@ -620,7 +623,7 @@ textarea::placeholder {
 .md h1,
 .md h2,
 .md h3 {
-  font-size: 22.5px;
+  font-size: calc(22.5px * var(--ts));
   margin: 14px 0 6px;
 }
 
@@ -629,7 +632,7 @@ textarea::placeholder {
 }
 
 .md code {
-  font: 18.75px/1.5 ui-monospace, "SF Mono", Menlo, monospace;
+  font: calc(18.75px * var(--ts))/1.5 ui-monospace, "SF Mono", Menlo, monospace;
   background: var(--code-bg);
   padding: 1px 5px;
   border-radius: 4px;
@@ -649,7 +652,7 @@ textarea::placeholder {
 
 .md table {
   border-collapse: collapse;
-  font-size: 19.5px;
+  font-size: calc(19.5px * var(--ts));
 }
 
 .md th,
@@ -701,7 +704,7 @@ textarea::placeholder {
 
 .prefs-head {
   padding: 16px calc(20px + var(--col)) 6px;
-  font-size: 19.5px;
+  font-size: calc(19.5px * var(--ts));
   font-weight: 600;
   color: var(--muted);
   letter-spacing: 0.02em;
@@ -734,12 +737,12 @@ textarea::placeholder {
 }
 
 .pref-title {
-  font-size: 22.5px;
+  font-size: calc(22.5px * var(--ts));
   color: var(--text);
 }
 
 .pref-detail {
-  font-size: 18.75px;
+  font-size: calc(18.75px * var(--ts));
   color: var(--muted);
 }
 
@@ -778,7 +781,7 @@ textarea::placeholder {
   align-items: center;
   gap: 14px;
   padding: 10px calc(20px + var(--col)) 14px;
-  font-size: 18px;
+  font-size: calc(18px * var(--ts));
   color: var(--hint);
 }
 
@@ -795,7 +798,7 @@ textarea::placeholder {
 
 .keys-section {
   padding: 12px calc(20px + var(--col)) 2px;
-  font-size: 16.5px;
+  font-size: calc(16.5px * var(--ts));
   font-weight: 600;
   color: var(--hint);
   text-transform: uppercase;
@@ -808,7 +811,7 @@ textarea::placeholder {
 }
 
 .keys .pref-title {
-  font-size: 20px;
+  font-size: calc(20px * var(--ts));
 }
 
 .caps {
@@ -822,7 +825,7 @@ textarea::placeholder {
   padding: 2px 9px;
   border-radius: 6px;
   background: var(--switch-off);
-  font-size: 17px;
+  font-size: calc(17px * var(--ts));
   text-align: center;
   color: var(--text);
 }
@@ -839,11 +842,68 @@ textarea::placeholder {
 .segments span {
   padding: 3px 12px;
   border-radius: 6px;
-  font-size: 18px;
+  font-size: calc(18px * var(--ts));
   color: var(--muted);
 }
 
 .segments span.on {
   background: var(--accent);
   color: #fff;
+}
+
+/* --- motion: views and new messages ease in; the panel's own resize is AppKit's --- */
+
+/* A view taking the panel's place fades in and settles from just below. */
+.history,
+.list,
+.prefs,
+.keys,
+.answer {
+  animation: view-in 0.26s cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+
+@keyframes view-in {
+  from {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+}
+
+/* Each message rises into place as it arrives. */
+.msg {
+  animation: msg-in 0.32s cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+
+@keyframes msg-in {
+  from {
+    opacity: 0;
+    transform: translateY(8px) scale(0.99);
+  }
+}
+
+.row,
+.pref,
+.logo {
+  transition:
+    background-color 0.14s ease,
+    transform 0.18s cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+.logo:hover {
+  transform: scale(1.08);
+}
+
+.logo:active {
+  transform: scale(0.94);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .history,
+  .list,
+  .prefs,
+  .keys,
+  .answer,
+  .msg {
+    animation: none;
+  }
 }

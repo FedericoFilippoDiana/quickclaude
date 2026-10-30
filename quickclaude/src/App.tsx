@@ -12,6 +12,12 @@ import "./App.css";
 const WIDTH = 720;
 const COMPACT_MAX = 560;
 const CHAT_HEIGHT = 640;
+// One width for every view, dragged from the panel's edges; the chat's height too. Both are kept.
+const MIN_WIDTH = 480;
+const MIN_TALL_HEIGHT = 320;
+const SIZE_KEY = "quickclaude.size";
+// Two spaces this close together on a new chat open your chats; one opens the last.
+const DOUBLE_SPACE_MS = 350;
 const MAX_IMAGE_EDGE = 2000; // px; larger pastes are scaled down before sending
 const MAX_IMAGE_BYTES = 3_700_000; // keeps the base64 under the API's 5 MB image limit
 
@@ -140,13 +146,20 @@ function UserBody(props: { msg: Msg }) {
 
 type Overlay = "none" | "history" | "prefs" | "keys";
 type Theme = "system" | "light" | "dark";
-type Prefs = { bringForward: boolean; sound: boolean; notification: boolean; theme: Theme };
-type Toggle = Exclude<keyof Prefs, "theme">;
+type Prefs = { bringForward: boolean; sound: boolean; notification: boolean; theme: Theme; textSize: number };
+type Toggle = Exclude<keyof Prefs, "theme" | "textSize">;
 const THEMES: { value: Theme; label: string }[] = [
   { value: "system", label: "System" },
   { value: "light", label: "Light" },
   { value: "dark", label: "Dark" },
 ];
+const TEXT_SIZES: { value: number; label: string }[] = [
+  { value: 0.8, label: "Smaller" },
+  { value: 0.9, label: "Small" },
+  { value: 1, label: "Default" },
+  { value: 1.15, label: "Large" },
+];
+const applyTextSize = (size: number) => document.documentElement.style.setProperty("--ts", String(size || 1));
 
 // The settings in ⌘, (stored by the shell), in display order.
 const PREF_ROWS: { key: Toggle; title: string; detail: string }[] = [
@@ -172,12 +185,13 @@ const KEY_SECTIONS: { title: string; rows: { keys: string[]; title: string }[] }
   {
     title: "Anywhere",
     rows: [
-      { keys: ["⌥Space"], title: "Show or hide QuickClaude" },
+      { keys: ["⌥Space"], title: "Show QuickClaude: a new chat, or a reply you haven't seen" },
       { keys: ["⌘/"], title: "Keyboard shortcuts" },
       { keys: ["⌘,"], title: "Preferences" },
       { keys: ["⌘F"], title: "Full screen" },
       { keys: ["⌘T"], title: "Keep on top" },
       { keys: ["⌘N"], title: "New chat" },
+      { keys: ["✦"], title: "Click the spark for your chats" },
       { keys: ["⌘⇧H"], title: "Continue in a terminal" },
       { keys: ["⌘."], title: "Stop the answer" },
       { keys: ["⇥"], title: "Next model" },
@@ -189,10 +203,11 @@ const KEY_SECTIONS: { title: string; rows: { keys: string[]; title: string }[] }
   {
     title: "Asking",
     rows: [
-      { keys: ["↩"], title: "Ask a new question" },
-      { keys: ["⌘↩"], title: "Follow up as a chat" },
+      { keys: ["↩"], title: "Ask, or continue the chat on screen" },
       { keys: ["⇧↩"], title: "New line" },
       { keys: ["↓"], title: "Open history (on an empty input)" },
+      { keys: ["space"], title: "Open your last chat (on a new, empty chat)" },
+      { keys: ["space", "space"], title: "Open all your chats (on a new, empty chat)" },
       { keys: ["⌘V"], title: "Paste an image" },
       { keys: ["⌫"], title: "Remove the last image (on an empty input)" },
       { keys: ["drop"], title: "Drop files to insert their paths" },
@@ -215,7 +230,7 @@ const KEY_SECTIONS: { title: string; rows: { keys: string[]; title: string }[] }
     rows: [
       { keys: ["↑", "↓"], title: "Choose a setting" },
       { keys: ["space"], title: "Turn it on or off" },
-      { keys: ["←", "→"], title: "Change the theme" },
+      { keys: ["←", "→"], title: "Change the theme or text size" },
     ],
   },
 ];
@@ -246,6 +261,9 @@ export default function App() {
   const [context, setContext] = createSignal<number | null>(null);
   // Busy, or waiting on background work that will reply by itself.
   const working = () => busy() || tasks() > 0;
+  // Chats that finished while you were away and you haven't looked at yet, newest last.
+  const [unseen, setUnseen] = createSignal<string[]>([]);
+  const markSeen = (id: string | null) => id && setUnseen((u) => u.filter((x) => x !== id));
   let turn = 0;
   let stashedDraft = "";
   let input!: HTMLTextAreaElement;
@@ -428,6 +446,7 @@ export default function App() {
   }
   function savePrefs(next: Prefs) {
     setPrefs(next);
+    applyTextSize(next.textSize);
     invoke("set_prefs", { new: next }).catch((e) => setNotice(`Couldn't save preferences: ${e}`));
   }
   function togglePref(key: Toggle) {
@@ -445,17 +464,29 @@ export default function App() {
     const i = THEMES.findIndex((t) => t.value === p.theme);
     savePrefs({ ...p, theme: THEMES[(Math.max(i, 0) + step + THEMES.length) % THEMES.length].value });
   }
+  // The text size row comes last; step moves through the sizes without wrapping.
+  const sizeRow = themeRow + 1;
+  function stepSize(step: number) {
+    const p = prefs();
+    if (!p) return;
+    const i = Math.max(TEXT_SIZES.findIndex((t) => t.value === p.textSize), 0);
+    savePrefs({ ...p, textSize: TEXT_SIZES[Math.min(Math.max(i + step, 0), TEXT_SIZES.length - 1)].value });
+  }
   function onPrefsKey(e: KeyboardEvent) {
-    const n = PREF_ROWS.length + 1;
+    const n = PREF_ROWS.length + 2;
     if (e.key === "ArrowDown" || e.key === "ArrowUp") {
       e.preventDefault();
       setPrefRow((i) => (i + (e.key === "ArrowDown" ? 1 : n - 1)) % n);
     } else if (prefRow() === themeRow && (e.key === "ArrowLeft" || e.key === "ArrowRight")) {
       e.preventDefault();
       stepTheme(e.key === "ArrowRight" ? 1 : -1);
+    } else if (prefRow() === sizeRow && (e.key === "ArrowLeft" || e.key === "ArrowRight")) {
+      e.preventDefault();
+      stepSize(e.key === "ArrowRight" ? 1 : -1);
     } else if (e.key === " " || e.key === "Enter") {
       e.preventDefault();
       if (prefRow() === themeRow) stepTheme(1);
+      else if (prefRow() === sizeRow) stepSize(1);
       else togglePref(PREF_ROWS[prefRow()].key);
     } else if (e.key === "Escape") {
       e.preventDefault();
@@ -500,6 +531,7 @@ export default function App() {
     setBusy(false);
     setNotice("");
     setSessionId(row.id);
+    markSeen(row.id);
     setChatTitle(row.title);
     setTasks(0);
     setContext(null);
@@ -550,6 +582,7 @@ export default function App() {
       }
       case "history":
         setSessions(ev.sessions);
+        if (latestDue) onLatestList(ev.sessions);
         break;
       case "tasks":
         setTasks(ev.count);
@@ -571,6 +604,7 @@ export default function App() {
       }
       case "deleted":
         setSessions((all) => all?.filter((s) => s.id !== ev.id) ?? null);
+        markSeen(ev.id);
         // The open chat was the one deleted: it no longer exists to follow up on.
         if (sessionId() === ev.id) {
           turn++;
@@ -670,7 +704,27 @@ export default function App() {
   // ⌘N: an empty input, and the panel glides back to the centre of its screen.
   function newChat() {
     reset();
-    if (!full()) invoke("center_panel");
+    if (!full()) invoke("center_panel", { width: size.width });
+  }
+
+  // The spark shows your chats in place of the chat; again, it goes back.
+  function toggleHistory() {
+    if (overlay() === "history") closeOverlay();
+    else showHistory();
+  }
+
+  // Space on a new, empty chat opens the one you used last, from a fresh list of your chats.
+  let latestDue = false;
+  let spaceAt = 0;
+  function openLatest() {
+    latestDue = true;
+    send({ type: "history" });
+  }
+  function onLatestList(list: SessionRow[]) {
+    latestDue = false;
+    if (!fresh()) return;
+    const latest = list.reduce<SessionRow | undefined>((a, b) => (!a || b.at > a.at ? b : a), undefined);
+    if (latest) openSession(latest);
   }
 
   function toTerminal() {
@@ -756,17 +810,28 @@ export default function App() {
     }
     if (e.key === "Enter" && !e.shiftKey && !e.isComposing) {
       e.preventDefault();
-      if (mode() === "chat") ask(true);
-      else if (e.metaKey && messages.length) {
-        setMode("chat");
-        ask(true);
-      } else ask(false);
+      // Asking opens the chat view, with your chats beside it; a new chat is ⌘N, or the shortcut.
+      const followUp = messages.length > 0;
+      setMode("chat");
+      ask(followUp);
     } else if (e.key === "Tab") {
       e.preventDefault();
       cycle(e.shiftKey ? "effort" : "model");
     } else if (e.key === "ArrowDown" && !draft()) {
       e.preventDefault();
       showHistory();
+    } else if (e.key === " " && !draft() && performance.now() - spaceAt < DOUBLE_SPACE_MS) {
+      // A second space, quickly: all your chats instead of the last one, over the new chat
+      // (the first space may already have opened the last one).
+      e.preventDefault();
+      spaceAt = 0;
+      latestDue = false;
+      if (mode() === "chat") reset();
+      showHistory();
+    } else if (e.key === " " && fresh()) {
+      e.preventDefault();
+      spaceAt = performance.now();
+      openLatest();
     } else if (e.key === "Escape") {
       // One step back per press: cancel an asked compact, clear what's typed (and pasted),
       // close the chat, then hide.
@@ -814,14 +879,18 @@ export default function App() {
   // Full screen (⌘F, in any view): the panel fills the screen with a centred reading column.
   // The shell places it and puts it back; until then the panel stops sizing itself.
   const [full, setFull] = createSignal(false);
-  function toggleFull() {
+  async function toggleFull() {
     const next = !full();
     setFull(next);
-    if (next) invoke("set_full", { full: true, width: WIDTH, height: lastHeight });
-    else {
+    if (next) {
+      await limitSize(undefined);
+      invoke("set_full", { full: true, width: lastWidth, height: lastHeight });
+    } else {
       // Measured with the full-screen layout gone, so the panel returns at its normal size.
       lastHeight = wantedHeight();
-      invoke("set_full", { full: false, width: WIDTH, height: lastHeight });
+      lastWidth = size.width;
+      await invoke("set_full", { full: false, width: lastWidth, height: lastHeight });
+      limitSize(tall() ? null : lastHeight);
     }
   }
 
@@ -856,15 +925,60 @@ export default function App() {
 
   // --- window sizing: compact hugs its content; chat and history are a fixed tall panel ---
   let lastHeight = 0;
-  const wantedHeight = () => (tall() ? CHAT_HEIGHT : Math.min(Math.ceil(panel.offsetHeight), COMPACT_MAX));
-  const fit = () => {
+  let lastWidth = 0;
+  let wasTall = false;
+  const size: { width: number; height: number } = (() => {
+    try {
+      return { width: WIDTH, height: CHAT_HEIGHT, ...JSON.parse(localStorage.getItem(SIZE_KEY) ?? "{}") };
+    } catch {
+      return { width: WIDTH, height: CHAT_HEIGHT };
+    }
+  })();
+  const wantedHeight = () => (tall() ? size.height : Math.min(Math.ceil(panel.offsetHeight), COMPACT_MAX));
+  // The width is always yours to drag. The bar's height follows its content (null: the chat's is free);
+  // undefined lifts every limit, for full screen.
+  const limitSize = (height: number | null | undefined) =>
+    Promise.all([
+      win.setMinSize(height === undefined ? null : new LogicalSize(MIN_WIDTH, height ?? MIN_TALL_HEIGHT)),
+      win.setMaxSize(height == null ? null : new LogicalSize(100_000, height)),
+    ]).catch(() => {});
+  // Bumped by each resize, so a newer one takes over from an animation still running.
+  let sizing = 0;
+  let growing = false;
+  const fit = async () => {
     if (full()) return;
     const h = wantedHeight();
-    if (h !== lastHeight) {
-      lastHeight = h;
-      win.setSize(new LogicalSize(WIDTH, h));
-    }
+    const w = size.width;
+    if (h === lastHeight && w === lastWidth) return;
+    // Never from less than the bar: a measure taken mid-change can be nearly empty.
+    const from = Math.max(lastHeight, Math.min(h, 64));
+    lastHeight = h;
+    lastWidth = w;
+    const isTall = tall();
+    // Into the chat and back, the panel grows or shrinks downwards, easing out.
+    const animate = isTall !== wasTall && from > 0;
+    wasTall = isTall;
+    const run = ++sizing;
+    await limitSize(undefined);
+    if (animate) {
+      growing = true;
+      await invoke("animate_size", { width: w, height: h }).catch(() => win.setSize(new LogicalSize(w, h)));
+      if (run === sizing) growing = false;
+    } else await win.setSize(new LogicalSize(w, h));
+    if (run === sizing) limitSize(isTall ? null : h);
   };
+  createEffect(() => win.setResizable(!full()).catch(() => {}));
+  // A size you drag to (not one set here) is kept: its width for every view, its height for the chat.
+  win.onResized(async ({ payload }) => {
+    if (full() || growing) return;
+    const now = payload.toLogical(await win.scaleFactor());
+    const width = Math.round(now.width);
+    const height = Math.round(now.height);
+    if (Math.abs(width - lastWidth) < 2 && Math.abs(height - lastHeight) < 2) return;
+    lastWidth = size.width = width;
+    if (tall()) lastHeight = size.height = height;
+    localStorage.setItem(SIZE_KEY, JSON.stringify(size));
+  });
   // The input bar moves between layouts when the view changes, so refocus it.
   createEffect(() => {
     mode();
@@ -936,6 +1050,7 @@ export default function App() {
   }
 
   onMount(() => {
+    invoke<Prefs>("get_prefs").then((p) => applyTextSize(p.textSize));
     window.addEventListener("keydown", onShiftEsc, true);
     window.addEventListener("keydown", onWindowKeyDown);
     onCleanup(() => {
@@ -956,8 +1071,17 @@ export default function App() {
         if (sessionId() !== e.payload) openSession({ id: e.payload, title: "", at: 0, pinned: 0 });
         else setMode("chat");
       }),
+      listen<string>("unseen", (e) => setUnseen((u) => [...u.filter((x) => x !== e.payload), e.payload])),
       listen("panel-shown", () => {
-        // The panel comes back exactly as it was left: answer, chat, open screen, draft and cursor.
+        // A new chat, unless something is waiting for you: a reply you haven't seen (the open
+        // chat's first), a chat still working, or text you haven't sent. Then it's as you left it.
+        const waiting = unseen().includes(sessionId() ?? "") || working() || draft() || attachments().length;
+        if (!waiting) {
+          const next = unseen()[unseen().length - 1];
+          if (next) openSession({ id: next, title: "", at: 0, pinned: 0 });
+          else if (!fresh()) newChat();
+        }
+        markSeen(sessionId());
         if (overlay() === "history") {
           // A delete armed before hiding shouldn't fire on the first key after; the list may be stale.
           setArmed(false);
@@ -977,7 +1101,7 @@ export default function App() {
   // Drag the panel by any spot that isn't a control or selectable text; it reopens where it's left.
   function onMouseDown(e: MouseEvent) {
     if (e.button !== 0 || full()) return;
-    if ((e.target as HTMLElement).closest("button, a, textarea, input, .pref, .answer, .list")) return;
+    if ((e.target as HTMLElement).closest("button, a, textarea, input, .pref, .answer, .list, .logo")) return;
     e.preventDefault();
     win.startDragging();
   }
@@ -1010,7 +1134,7 @@ export default function App() {
         </div>
       </Show>
       <div class="bar">
-        <svg ref={logo} class="logo" viewBox="2 0 20 20" aria-hidden="true">
+        <svg ref={logo} class="logo" viewBox="2 0 20 20" aria-label="Your chats" role="button" onClick={toggleHistory}>
           <path d="M12 2l1.8 6.2L20 10l-6.2 1.8L12 18l-1.8-6.2L4 10l6.2-1.8z" />
         </svg>
         <textarea
@@ -1026,7 +1150,7 @@ export default function App() {
                 : "Keep on top: off"
               : flash()
                 ? `Ask ${modelName()} · ${effort()}…`
-                : mode() === "chat"
+                : mode() === "chat" || messages.length
                   ? "Ask a follow-up…"
                   : "Ask Claude…"
           }
@@ -1128,6 +1252,33 @@ export default function App() {
                   onClick={() => {
                     const p = prefs();
                     if (p) savePrefs({ ...p, theme: t.value });
+                  }}
+                >
+                  {t.label}
+                </span>
+              )}
+            </For>
+          </span>
+        </div>
+        <div
+          class="pref"
+          classList={{ selected: prefRow() === sizeRow }}
+          onMouseMove={() => setPrefRow(sizeRow)}
+        >
+          <span class="pref-text">
+            <span class="pref-title">Text size</span>
+            <span class="pref-detail">The size of all text in the panel.</span>
+          </span>
+          <span class="segments" role="radiogroup">
+            <For each={TEXT_SIZES}>
+              {(t) => (
+                <span
+                  role="radio"
+                  aria-checked={prefs()?.textSize === t.value}
+                  classList={{ on: prefs()?.textSize === t.value }}
+                  onClick={() => {
+                    const p = prefs();
+                    if (p) savePrefs({ ...p, textSize: t.value });
                   }}
                 >
                   {t.label}
