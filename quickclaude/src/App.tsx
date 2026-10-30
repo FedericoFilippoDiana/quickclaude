@@ -40,6 +40,7 @@ type AgentEvent =
   | { type: "ready" }
   | { type: "models"; models: Model[]; defaultModel: string; defaultEffort: string; chosen: boolean }
   | { type: "session"; id: string }
+  | { type: "usage"; session: UsageWindow; weekly: UsageWindow }
   | { type: "delta"; turn: number; text: string }
   | { type: "tool"; turn: number; name: string }
   | {
@@ -146,7 +147,12 @@ function UserBody(props: { msg: Msg }) {
 
 type Overlay = "none" | "history" | "prefs" | "keys";
 type Theme = "system" | "light" | "dark";
-type Prefs = { bringForward: boolean; sound: boolean; notification: boolean; theme: Theme; textSize: number };
+type Prefs = {
+  bringForward: boolean;
+  sound: boolean;
+  notification: boolean;
+  usageBar: boolean;
+  theme: Theme; textSize: number };
 type Toggle = Exclude<keyof Prefs, "theme" | "textSize">;
 const THEMES: { value: Theme; label: string }[] = [
   { value: "system", label: "System" },
@@ -174,7 +180,15 @@ const PREF_ROWS: { key: Toggle; title: string; detail: string }[] = [
     title: "Show a notification",
     detail: "A macOS notification with the reply. Skipped when QuickClaude comes forward.",
   },
+  {
+    key: "usageBar",
+    title: "Show the usage bar",
+    detail: "A thin line along the bottom: how much of your 5-hour plan limit is left.",
+  },
 ];
+
+// One plan rate-limit window from the sidecar: percent used and when it resets.
+type UsageWindow = { used: number; resetsAt: string | null } | null;
 
 // The shortcuts screen (⌘/), in the Preferences layout. The panel shows no key hints of its own.
 const KEY_SECTIONS: { title: string; rows: { keys: string[]; title: string }[] }[] = [
@@ -255,6 +269,9 @@ export default function App() {
   const [active, setActive] = createSignal<Set<string>>(new Set());
   // The open chat's context size; unknown (null) until its first turn here.
   const [context, setContext] = createSignal<number | null>(null);
+  // Plan usage for the bottom bar. `usageShown` restarts the fill animation on every show.
+  const [usage, setUsage] = createSignal<{ session: UsageWindow; weekly: UsageWindow } | null>(null);
+  const [usageShown, setUsageShown] = createSignal(false);
   // Busy, or waiting on background work that will reply by itself.
   const working = () => busy() || tasks() > 0;
   // Chats that finished while you were away and you haven't looked at yet, newest last.
@@ -441,6 +458,8 @@ export default function App() {
     setPrefs(await invoke<Prefs>("get_prefs"));
   }
   function savePrefs(next: Prefs) {
+    // Switching the usage bar back on fetches it now rather than at the next show.
+    if (next.usageBar && !prefs()?.usageBar) send({ type: "usage" });
     setPrefs(next);
     applyTextSize(next.textSize);
     // The input's height was measured at the old size.
@@ -631,6 +650,10 @@ export default function App() {
         break;
       case "context":
         setContext(ev.tokens);
+        break;
+      case "usage":
+        setUsage({ session: ev.session, weekly: ev.weekly });
+        requestAnimationFrame(() => setUsageShown(true));
         break;
       case "handoff":
         clear();
@@ -1053,7 +1076,9 @@ export default function App() {
 
   onMount(() => {
     invoke<Prefs>("get_prefs").then((p) => {
+      setPrefs(p);
       applyTextSize(p.textSize);
+      if (p.usageBar) send({ type: "usage" });
       autosize();
     });
     window.addEventListener("keydown", onShiftEsc, true);
@@ -1078,6 +1103,9 @@ export default function App() {
       }),
       listen<string>("unseen", (e) => setUnseen((u) => [...u.filter((x) => x !== e.payload), e.payload])),
       listen("panel-shown", () => {
+        // Refill the usage bar from empty, like a video's progress bar loading.
+        setUsageShown(false);
+        if (prefs()?.usageBar !== false) send({ type: "usage" });
         // A new chat, unless something is waiting for you: a reply you haven't seen (the open
         // chat's first), a chat still working, or text you haven't sent. Then it's as you left it.
         const waiting = unseen().includes(sessionId() ?? "") || working() || draft() || attachments().length;
@@ -1385,6 +1413,7 @@ export default function App() {
       onMouseDown={onMouseDown}
     >
       <div class="top-ring" classList={{ on: onTop() }} />
+      <UsageBar usage={usage()} on={prefs()?.usageBar !== false} shown={usageShown()} />
       <Show when={overlay() !== "keys"} fallback={keysView}>
       <Show when={overlay() !== "prefs"} fallback={prefsView}>
       <Show when={overlay() !== "history"} fallback={historyView}>
@@ -1456,5 +1485,41 @@ export default function App() {
       </Show>
       </Show>
     </div>
+  );
+}
+
+const pct = (n: number) => `${Math.round(n)}%`;
+const resetIn = (iso: string | null) => {
+  if (!iso) return "";
+  const mins = Math.max(0, Math.round((Date.parse(iso) - Date.now()) / 60000));
+  return mins >= 60 ? ` · resets in ${Math.floor(mins / 60)}h ${mins % 60}m` : ` · resets in ${mins}m`;
+};
+
+// A hairline along the bottom edge: the share of the 5-hour plan limit still left.
+// Hover it for the numbers, weekly limit included.
+function UsageBar(props: {
+  usage: { session: UsageWindow; weekly: UsageWindow } | null;
+  on: boolean;
+  shown: boolean;
+}) {
+  const left = () => (props.usage?.session ? Math.max(0, 100 - props.usage.session.used) : null);
+  const title = () => {
+    const u = props.usage;
+    if (!u) return "";
+    const parts = [];
+    if (u.session) parts.push(`5-hour limit: ${pct(100 - u.session.used)} left${resetIn(u.session.resetsAt)}`);
+    if (u.weekly) parts.push(`Weekly limit: ${pct(100 - u.weekly.used)} left${resetIn(u.weekly.resetsAt)}`);
+    return parts.join("\n");
+  };
+  return (
+    <Show when={props.on && left() !== null}>
+      <div class="usage-bar" title={title()}>
+        <div
+          class="usage-fill"
+          classList={{ low: left()! < 20, out: left()! < 5 }}
+          style={{ transform: `scaleX(${props.shown ? left()! / 100 : 0})` }}
+        />
+      </div>
+    </Show>
   );
 }

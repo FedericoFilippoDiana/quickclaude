@@ -11,6 +11,7 @@
 //        {type:"choice", model, effort}                  remember the picked model and effort
 //        {type:"delete", id}                             delete a past session from Claude Code
 //        {type:"pin", ids, pinned}                       pin or unpin chats in history
+//        {type:"usage"}                                  refresh the plan's rate-limit meter
 //   out: {type:"ready"} | {type:"models", models, defaultModel, defaultEffort, chosen} | {type:"session", id}
 //        {type:"delta", turn, text} | {type:"tool", turn, name} | {type:"done", turn, ...}
 //        {type:"history", sessions} | {type:"deleted", id} | {type:"transcript", id, turn, messages}
@@ -21,6 +22,7 @@
 //        {type:"notify", id, title, text, current}  a chat finished; the shell alerts you if you're away
 //        {type:"compacted", turn, before, after}  context tokens around a /compact
 //        {type:"context", turn, tokens}  the open chat's context size, as /context counts it
+//        {type:"usage", session, weekly}  plan limits used (0-100) and reset time per window, or null
 //        {type:"handoff", id} | {type:"error", turn?, message}
 //
 // Auth comes from the local `claude` login (your Claude subscription).
@@ -608,6 +610,36 @@ async function handoff() {
   emit({ type: "handoff", id: s.id });
 }
 
+// --- plan usage meter ------------------------------------------------------
+
+// The panel asks on every show; the claude.ai usage endpoint is only hit once per USAGE_TTL.
+const USAGE_TTL = 30_000;
+let usageAt = 0;
+let usageCache = null;
+
+const usageWindow = (w) =>
+  w && typeof w.utilization === "number" ? { used: w.utilization, resetsAt: w.resets_at } : null;
+
+async function usage() {
+  if (usageCache && Date.now() - usageAt < USAGE_TTL) return emit(usageCache);
+  // Any running Claude Code process can answer; prefer one that's already up.
+  const s = current ?? (await spare?.catch(() => null));
+  if (!s) return;
+  try {
+    const r = await s.q.usage_EXPERIMENTAL_MAY_CHANGE_DO_NOT_RELY_ON_THIS_API_YET({ skipBehaviors: true });
+    if (!r.rate_limits_available || !r.rate_limits) return;
+    usageCache = {
+      type: "usage",
+      session: usageWindow(r.rate_limits.five_hour),
+      weekly: usageWindow(r.rate_limits.seven_day),
+    };
+    usageAt = Date.now();
+    emit(usageCache);
+  } catch (e) {
+    console.error("usage meter:", e.message);
+  }
+}
+
 // --- stdin loop -----------------------------------------------------------
 
 createInterface({ input: process.stdin }).on("line", (line) => {
@@ -633,6 +665,7 @@ createInterface({ input: process.stdin }).on("line", (line) => {
   else if (cmd.type === "choice") saveChoice(cmd);
   else if (cmd.type === "delete") remove(cmd.id);
   else if (cmd.type === "pin") pin(cmd);
+  else if (cmd.type === "usage") usage();
 });
 
 process.stdin.on("end", () => {
