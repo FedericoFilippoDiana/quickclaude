@@ -106,12 +106,12 @@ button {
   transition: opacity 0.35s ease;
 }
 
-/* --- usage bar: a hairline at the bottom edge, filled to the plan limit left --- */
+/* --- usage bar: a hairline at the bottom edge, filled to the plan limit used --- */
 
 .usage-bar {
   position: fixed;
-  left: 12px;
-  right: 12px;
+  left: 0;
+  right: 0;
   bottom: 0;
   height: 6px; /* hover target; the visible line is the 1.5px track below */
   z-index: 11;

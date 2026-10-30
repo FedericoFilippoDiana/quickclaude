@@ -183,7 +183,7 @@ const PREF_ROWS: { key: Toggle; title: string; detail: string }[] = [
   {
     key: "usageBar",
     title: "Show the usage bar",
-    detail: "A thin line along the bottom: how much of your 5-hour plan limit is left.",
+    detail: "A thin line along the bottom: how much of your 5-hour plan limit you've used.",
   },
 ];
 
@@ -1495,30 +1495,32 @@ const resetIn = (iso: string | null) => {
   return mins >= 60 ? ` · resets in ${Math.floor(mins / 60)}h ${mins % 60}m` : ` · resets in ${mins}m`;
 };
 
-// A hairline along the bottom edge: the share of the 5-hour plan limit still left.
+// A hairline along the bottom edge: the share of the 5-hour plan limit used; full means none left.
 // Hover it for the numbers, weekly limit included.
 function UsageBar(props: {
   usage: { session: UsageWindow; weekly: UsageWindow } | null;
   on: boolean;
   shown: boolean;
 }) {
-  const left = () => (props.usage?.session ? Math.max(0, 100 - props.usage.session.used) : null);
+  const used = () => (props.usage?.session ? Math.min(100, Math.max(0, props.usage.session.used)) : null);
   const title = () => {
     const u = props.usage;
     if (!u) return "";
     const parts = [];
-    if (u.session) parts.push(`5-hour limit: ${pct(100 - u.session.used)} left${resetIn(u.session.resetsAt)}`);
-    if (u.weekly) parts.push(`Weekly limit: ${pct(100 - u.weekly.used)} left${resetIn(u.weekly.resetsAt)}`);
+    if (u.session) parts.push(`5-hour limit: ${pct(u.session.used)} used${resetIn(u.session.resetsAt)}`);
+    if (u.weekly) parts.push(`Weekly limit: ${pct(u.weekly.used)} used${resetIn(u.weekly.resetsAt)}`);
     return parts.join("\n");
   };
   return (
-    <Show when={props.on && left() !== null}>
-      <div class="usage-bar" title={title()}>
-        <div
-          class="usage-fill"
-          classList={{ low: left()! < 20, out: left()! < 5 }}
-          style={{ transform: `scaleX(${props.shown ? left()! / 100 : 0})` }}
-        />
+    <Show when={props.on && used() !== null}>
+      <div class="usage-clip">
+        <div class="usage-bar" title={title()}>
+          <div
+            class="usage-fill"
+            classList={{ low: used()! > 80, out: used()! > 95 }}
+            style={{ transform: `scaleX(${props.shown ? used()! / 100 : 0})` }}
+          />
+        </div>
       </div>
     </Show>
   );
