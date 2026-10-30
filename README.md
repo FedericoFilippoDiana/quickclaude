@@ -12,12 +12,14 @@ Most of my questions for Claude are quick ones, but asking meant switching to a 
 
 - **⌥Space** shows or hides the panel. It opens on a new chat, unless a reply you haven't seen is waiting.
 - **↩** asks, continuing the chat on screen. **⌘N** starts a new chat.
-- **Space** on a new, empty chat opens your last chat; **Space Space** opens all your chats. Click the spark (or **↓**) for all your chats.
+- **Space** on a new, empty chat opens your last chat; **Space Space** opens all your chats. Clicking the spark shows your chats too, and clicking it again goes back.
 - **Tab** switches the model, **⇧Tab** switches the effort. Your choice is remembered.
 - **↓** on an empty input browses your past QuickClaude chats. Select several with **⇧↑↓**, **⇧click**, **⌘click** or **⌘A**, and press **⌫** twice to delete them.
 - **⌘V** pastes an image into the question.
-- **⌘T** continues the conversation in your terminal: as a new [herdr](https://herdr.dev) workspace if herdr is running, otherwise in a new Ghostty or Terminal window.
-- **⌘,** opens preferences: a sound, a notification, or bringing the chat forward when a reply finishes while you're away.
+- **⌘⇧H** continues the conversation in your terminal: as a new [herdr](https://herdr.dev) workspace if herdr is running, otherwise in a new Ghostty or Terminal window.
+- **⌘T** keeps the panel on top, **⌘F** fills the screen, **⌘/** lists every shortcut.
+- Drag the panel's edges to set its width (the same for the bar and the chat) and the chat's height. Both are remembered.
+- **⌘,** opens preferences: a sound, a notification, or bringing the chat forward when a reply finishes while you're away; the theme and the text size.
 - **Esc** steps back: closes a list, clears the input, then hides the panel.
 
 ## What you need
