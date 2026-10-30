@@ -152,6 +152,7 @@ type Prefs = {
   sound: boolean;
   notification: boolean;
   usageBar: boolean;
+  keyHints: boolean;
   theme: Theme; textSize: number };
 type Toggle = Exclude<keyof Prefs, "theme" | "textSize">;
 const THEMES: { value: Theme; label: string }[] = [
@@ -184,6 +185,11 @@ const PREF_ROWS: { key: Toggle; title: string; detail: string }[] = [
     key: "usageBar",
     title: "Show the usage bar",
     detail: "A thin line along the bottom: how much of your 5-hour plan limit you've used.",
+  },
+  {
+    key: "keyHints",
+    title: "Show shortcut hints",
+    detail: "A faint legend of shortcuts under a new chat, Raycast-style. Each one is clickable.",
   },
 ];
 
@@ -804,6 +810,7 @@ export default function App() {
   }
 
   function onKeyDown(e: KeyboardEvent) {
+    if (overlay() === "keys") return; // the drawer's keys are handled at the window (onKeysKey)
     if (overlay() !== "none") {
       const del = e.key === "Delete" || (e.key === "Backspace" && (e.metaKey || !draft()));
       if (e.key === "Tab") e.preventDefault();
@@ -922,6 +929,12 @@ export default function App() {
     () => mode() === "compact" && messages.length === 0 && overlay() === "none" && !draft() && attachments().length === 0,
   );
   createEffect(() => invoke("set_fresh", { fresh: fresh() }));
+
+  // The shortcuts drawer sits over the input: keep keys out of it while open, give focus back after.
+  createEffect(on(overlay, (now, before) => {
+    if (now === "keys") input?.blur();
+    else if (before === "keys") queueMicrotask(() => input?.isConnected && input.focus());
+  }));
 
   // Files dropped on the panel go into the input as their full paths, at the cursor.
   function insertPaths(paths: string[]) {
@@ -1056,7 +1069,9 @@ export default function App() {
       }
       return;
     }
-    if (e.metaKey && e.key === "/") {
+    // ⌘/ for the shortcuts. On an Italian keyboard "/" is ⇧7, and with ⌘ held WebKit may report
+    // the key as "7", so accept ⌘⇧7 too.
+    if (e.metaKey && (e.key === "/" || (e.shiftKey && e.code === "Digit7"))) {
       e.preventDefault();
       if (overlay() === "keys") setOverlay("none");
       else {
@@ -1135,7 +1150,7 @@ export default function App() {
   // Drag the panel by any spot that isn't a control or selectable text; it reopens where it's left.
   function onMouseDown(e: MouseEvent) {
     if (e.button !== 0 || full()) return;
-    if ((e.target as HTMLElement).closest("button, a, textarea, input, .pref, .answer, .list, .logo")) return;
+    if ((e.target as HTMLElement).closest("button, a, textarea, input, .pref, .answer, .list, .logo, .keys-layer")) return;
     e.preventDefault();
     win.startDragging();
   }
@@ -1148,6 +1163,38 @@ export default function App() {
       openUrl(a.href);
     }
   }
+
+  // Shortcut legend (⌘, "Show shortcut hints"): on a new, empty chat, a faint row with the few
+  // keys worth learning first, then (like Raycast's "Actions ⌘K") one that opens them all.
+  // Each hint is a button doing what its key does.
+  const HINTS: { keys: string; label: string; run: () => void; more?: boolean }[] = [
+    { keys: "space", label: "Last chat", run: () => openLatest() },
+    { keys: "↓", label: "History", run: () => showHistory() },
+    { keys: "⌘T", label: "Pin window", run: () => toggleOnTop() },
+    { keys: "⌘/", label: "All shortcuts", run: () => setOverlay("keys"), more: true },
+  ];
+  const hints = (
+    <Show when={prefs()?.keyHints && fresh()}>
+      <div class="hints">
+        <For each={HINTS}>
+          {(h) => (
+            <button
+              class="hint"
+              classList={{ more: !!h.more }}
+              onClick={() => {
+                h.run();
+                // Clicking moved focus to the hint; the input keeps taking keys where it's still on screen.
+                queueMicrotask(() => input.isConnected && input.focus());
+              }}
+            >
+              <kbd>{h.keys}</kbd>
+              {h.label}
+            </button>
+          )}
+        </For>
+      </div>
+    </Show>
+  );
 
   const bar = (
     <div class="bar-wrap">
@@ -1324,36 +1371,43 @@ export default function App() {
     </>
   );
 
+  // Where Esc leaves you from the shortcuts drawer: the view still showing beside it.
+  const keysBackTo = () => (mode() === "chat" ? "the chat" : messages.length ? "the answer" : "a new chat");
+
+  // Shortcuts (⌘/): a drawer sliding in from the right over the current view, which stays
+  // visible (dimmed) beside it. Esc or a click on the dimmed part goes back to that view.
   const keysView = (
-    <>
-      <div class="prefs-head">Keyboard Shortcuts</div>
-      <div class="keys" ref={keysList}>
-        <For each={KEY_SECTIONS}>
-          {(section) => (
-            <>
-              <div class="keys-section">{section.title}</div>
-              <div class="prefs">
+    <div class="keys-layer">
+      <div class="keys-scrim" onClick={() => setOverlay("none")} />
+      <aside class="keys-drawer">
+        <div class="keys-head">Shortcuts</div>
+        <div class="keys" ref={keysList}>
+          <For each={KEY_SECTIONS}>
+            {(section) => (
+              <>
+                <div class="keys-section">{section.title}</div>
                 <For each={section.rows}>
                   {(row) => (
-                    <div class="pref">
-                      <span class="pref-text">
-                        <span class="pref-title">{row.title}</span>
-                      </span>
+                    <div class="key-row">
+                      <span class="key-title">{row.title}</span>
                       <span class="caps">
                         <For each={row.keys}>{(k) => <span>{k}</span>}</For>
                       </span>
                     </div>
                   )}
                 </For>
-              </div>
-            </>
-          )}
-        </For>
-      </div>
-      <div class="prefs-foot">
-        <span>esc close</span>
-      </div>
-    </>
+              </>
+            )}
+          </For>
+        </div>
+        <button class="keys-foot" onClick={() => setOverlay("none")}>
+          <span class="caps">
+            <span>esc</span>
+          </span>
+          Back to {keysBackTo()}
+        </button>
+      </aside>
+    </div>
   );
 
   const historyView = (
@@ -1409,13 +1463,16 @@ export default function App() {
     <div
       ref={panel}
       class="panel"
-      classList={{ tall: tall(), full: full(), chat: mode() === "chat" && overlay() === "none" }}
+      classList={{
+        tall: tall(),
+        full: full(),
+        chat: mode() === "chat" && (overlay() === "none" || overlay() === "keys"),
+      }}
       onClick={onClick}
       onMouseDown={onMouseDown}
     >
       <div class="top-ring" classList={{ on: onTop() }} />
       <UsageBar usage={usage()} on={prefs()?.usageBar !== false} shown={usageShown()} />
-      <Show when={overlay() !== "keys"} fallback={keysView}>
       <Show when={overlay() !== "prefs"} fallback={prefsView}>
       <Show when={overlay() !== "history"} fallback={historyView}>
         <Show
@@ -1423,6 +1480,7 @@ export default function App() {
           fallback={
             <>
               {bar}
+              {hints}
               <>
                 <Show when={lastAnswer()?.role === "assistant"}>
                   <div class="answer">
@@ -1484,7 +1542,7 @@ export default function App() {
         </Show>
       </Show>
       </Show>
-      </Show>
+      <Show when={overlay() === "keys"}>{keysView}</Show>
     </div>
   );
 }

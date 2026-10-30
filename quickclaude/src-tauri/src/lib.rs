@@ -40,6 +40,8 @@ struct Prefs {
     notification: bool,
     /// Show the thin plan-usage bar along the panel's bottom edge.
     usage_bar: bool,
+    /// Show a faint, clickable legend of shortcuts under a new chat's input.
+    key_hints: bool,
     /// "system", "light" or "dark".
     theme: String,
     /// Scale for every font size in the panel; 1 is the default.
@@ -48,7 +50,7 @@ struct Prefs {
 
 impl Default for Prefs {
     fn default() -> Self {
-        Self { bring_forward: false, sound: true, notification: true, usage_bar: true, theme: "system".into(), text_size: 1.0 }
+        Self { bring_forward: false, sound: true, notification: true, usage_bar: true, key_hints: false, theme: "system".into(), text_size: 1.0 }
     }
 }
 
