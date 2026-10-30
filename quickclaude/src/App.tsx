@@ -153,12 +153,8 @@ const THEMES: { value: Theme; label: string }[] = [
   { value: "light", label: "Light" },
   { value: "dark", label: "Dark" },
 ];
-const TEXT_SIZES: { value: number; label: string }[] = [
-  { value: 0.8, label: "Smaller" },
-  { value: 0.9, label: "Small" },
-  { value: 1, label: "Default" },
-  { value: 1.15, label: "Large" },
-];
+// Text size, as a scale of the default: any step between these.
+const TEXT_SIZE = { min: 0.7, max: 1.5, step: 0.05 };
 const applyTextSize = (size: number) => document.documentElement.style.setProperty("--ts", String(size || 1));
 
 // The settings in ⌘, (stored by the shell), in display order.
@@ -447,6 +443,8 @@ export default function App() {
   function savePrefs(next: Prefs) {
     setPrefs(next);
     applyTextSize(next.textSize);
+    // The input's height was measured at the old size.
+    queueMicrotask(autosize);
     invoke("set_prefs", { new: next }).catch((e) => setNotice(`Couldn't save preferences: ${e}`));
   }
   function togglePref(key: Toggle) {
@@ -464,14 +462,15 @@ export default function App() {
     const i = THEMES.findIndex((t) => t.value === p.theme);
     savePrefs({ ...p, theme: THEMES[(Math.max(i, 0) + step + THEMES.length) % THEMES.length].value });
   }
-  // The text size row comes last; step moves through the sizes without wrapping.
+  // The text size row comes last; ←→ move it a step, ↩ puts it back to 100%.
   const sizeRow = themeRow + 1;
-  function stepSize(step: number) {
+  function setTextSize(size: number) {
     const p = prefs();
     if (!p) return;
-    const i = Math.max(TEXT_SIZES.findIndex((t) => t.value === p.textSize), 0);
-    savePrefs({ ...p, textSize: TEXT_SIZES[Math.min(Math.max(i + step, 0), TEXT_SIZES.length - 1)].value });
+    const clamped = Math.min(Math.max(size, TEXT_SIZE.min), TEXT_SIZE.max);
+    savePrefs({ ...p, textSize: Math.round(clamped / TEXT_SIZE.step) * TEXT_SIZE.step });
   }
+  const stepSize = (step: number) => setTextSize((prefs()?.textSize || 1) + step * TEXT_SIZE.step);
   function onPrefsKey(e: KeyboardEvent) {
     const n = PREF_ROWS.length + 2;
     if (e.key === "ArrowDown" || e.key === "ArrowUp") {
@@ -486,7 +485,7 @@ export default function App() {
     } else if (e.key === " " || e.key === "Enter") {
       e.preventDefault();
       if (prefRow() === themeRow) stepTheme(1);
-      else if (prefRow() === sizeRow) stepSize(1);
+      else if (prefRow() === sizeRow) setTextSize(1);
       else togglePref(PREF_ROWS[prefRow()].key);
     } else if (e.key === "Escape") {
       e.preventDefault();
@@ -920,6 +919,8 @@ export default function App() {
 
   function autosize() {
     input.style.height = "auto";
+    // Off screen (preferences, shortcuts) there's nothing to measure; it's redone on the way back.
+    if (!input.isConnected) return;
     input.style.height = `${Math.min(input.scrollHeight, 240)}px`;
   }
 
@@ -984,6 +985,7 @@ export default function App() {
     mode();
     overlay();
     queueMicrotask(() => {
+      autosize();
       fit();
       input.focus();
     });
@@ -1050,7 +1052,10 @@ export default function App() {
   }
 
   onMount(() => {
-    invoke<Prefs>("get_prefs").then((p) => applyTextSize(p.textSize));
+    invoke<Prefs>("get_prefs").then((p) => {
+      applyTextSize(p.textSize);
+      autosize();
+    });
     window.addEventListener("keydown", onShiftEsc, true);
     window.addEventListener("keydown", onWindowKeyDown);
     onCleanup(() => {
@@ -1269,22 +1274,17 @@ export default function App() {
             <span class="pref-title">Text size</span>
             <span class="pref-detail">The size of all text in the panel.</span>
           </span>
-          <span class="segments" role="radiogroup">
-            <For each={TEXT_SIZES}>
-              {(t) => (
-                <span
-                  role="radio"
-                  aria-checked={prefs()?.textSize === t.value}
-                  classList={{ on: prefs()?.textSize === t.value }}
-                  onClick={() => {
-                    const p = prefs();
-                    if (p) savePrefs({ ...p, textSize: t.value });
-                  }}
-                >
-                  {t.label}
-                </span>
-              )}
-            </For>
+          <span class="size">
+            <input
+              type="range"
+              min={TEXT_SIZE.min}
+              max={TEXT_SIZE.max}
+              step={TEXT_SIZE.step}
+              value={prefs()?.textSize || 1}
+              aria-label="Text size"
+              onInput={(e) => setTextSize(Number(e.currentTarget.value))}
+            />
+            <span class="size-value">{Math.round((prefs()?.textSize || 1) * 100)}%</span>
           </span>
         </div>
       </div>

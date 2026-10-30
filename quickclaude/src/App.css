@@ -145,10 +145,10 @@ button {
 }
 
 .logo {
-  /* Centred on the first line of the input (42px tall, 36px in chat). */
+  /* Centred on the first line of the input, whatever the text size. */
   width: 28px;
   height: 28px;
-  margin-top: 7px;
+  margin-top: calc((42px * var(--ts) - 28px) / 2);
   fill: var(--accent);
   flex-shrink: 0;
   cursor: pointer;
@@ -161,7 +161,9 @@ textarea {
   outline: 0;
   background: transparent;
   color: var(--text);
-  font: calc(33px * var(--ts))/calc(42px * var(--ts)) -apple-system, BlinkMacSystemFont, "SF Pro Display", system-ui, sans-serif;
+  font-family: -apple-system, BlinkMacSystemFont, "SF Pro Display", system-ui, sans-serif;
+  font-size: calc(33px * var(--ts));
+  line-height: calc(42px * var(--ts));
   font-weight: 400;
   padding: 0;
   max-height: 240px;
@@ -174,15 +176,18 @@ textarea::-webkit-scrollbar {
   display: none;
 }
 
+/* In the chat, what you type is the size of the messages. */
 .chat .logo {
-  width: 24px;
-  height: 24px;
-  margin-top: 6px;
+  width: 22px;
+  height: 22px;
+  margin-top: calc((32px * var(--ts) - 22px) / 2);
 }
 
 .chat textarea {
-  font-size: calc(24px * var(--ts));
-  line-height: calc(36px * var(--ts));
+  font-family: inherit;
+  font-weight: 450;
+  font-size: calc(21px * var(--ts));
+  line-height: calc(32px * var(--ts));
 }
 
 textarea::placeholder {
@@ -906,4 +911,29 @@ textarea::placeholder {
   .msg {
     animation: none;
   }
+}
+
+/* Preferences → Text size: a slider and the size it gives. */
+.size {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-shrink: 0;
+}
+
+.size input {
+  width: 170px;
+  accent-color: var(--accent);
+  cursor: pointer;
+}
+
+.size-value {
+  min-width: 3.2em;
+  text-align: right;
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+}
+
+.size input:focus {
+  outline: none;
 }
