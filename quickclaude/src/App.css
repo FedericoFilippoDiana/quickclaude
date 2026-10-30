@@ -769,6 +769,13 @@ textarea::placeholder {
   padding: 4px calc(8px + var(--col));
 }
 
+/* Preferences fill the tall panel and scroll between the fixed head and foot. */
+.panel > .prefs {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+}
+
 .pref {
   width: 100%;
   display: flex;

@@ -289,7 +289,8 @@ export default function App() {
   const win = getCurrentWindow();
   const last = () => messages.length - 1;
   const lastAnswer = () => messages[last()];
-  const tall = () => overlay() === "history" || overlay() === "keys" || (mode() === "chat" && overlay() === "none");
+  // Preferences are tall too: their rows outgrew the compact panel's height cap and got cut off.
+  const tall = () => overlay() === "history" || overlay() === "keys" || overlay() === "prefs" || (mode() === "chat" && overlay() === "none");
 
   // --- model & effort ---
   const modelName = () => models().find((m) => m.value === model())?.name ?? "";
