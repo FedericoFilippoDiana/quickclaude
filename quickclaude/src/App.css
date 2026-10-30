@@ -108,13 +108,24 @@ button {
 
 /* --- usage bar: a hairline at the bottom edge, filled to the plan limit used --- */
 
-.usage-bar {
+/* Covers the panel and cuts along its rounded corners, so the straight line simply
+   disappears into them. clip-path, not border-radius + overflow: WebKit doesn't clip
+   the fill's transformed (GPU) layer with rounded overflow. */
+.usage-clip {
   position: fixed;
+  inset: 0;
+  clip-path: inset(0 round 14px);
+  pointer-events: none;
+  z-index: 11;
+}
+
+.usage-bar {
+  position: absolute;
   left: 0;
   right: 0;
   bottom: 0;
   height: 6px; /* hover target; the visible line is the 1.5px track below */
-  z-index: 11;
+  pointer-events: auto;
   display: flex;
   align-items: flex-end;
 }
