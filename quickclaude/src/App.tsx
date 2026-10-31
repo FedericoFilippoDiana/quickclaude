@@ -402,7 +402,8 @@ export default function App() {
     const n = filtered().length;
     if (!n) return;
     if (extend && !picked().size) anchor = selected();
-    const to = extend ? Math.min(Math.max(selected() + step, 0), n - 1) : (selected() + step + n) % n;
+    // Stops at the first and last chat rather than wrapping round.
+    const to = Math.min(Math.max(selected() + step, 0), n - 1);
     setSelected(to);
     if (extend) pickRange(to);
     else setPicked(new Set<string>());
@@ -471,6 +472,45 @@ export default function App() {
     pinTimer = window.setTimeout(() => setPinFlash(null), 1400);
     send({ type: "pin", ids, pinned });
   }
+
+  // Scrolling a list under a still mouse makes WebKit send mousemove too; only a real move
+  // should take the cursor, or ↑↓ near the edge snaps back to the row under the pointer.
+  let pointer = { x: -1, y: -1 };
+  function moved(e: MouseEvent) {
+    if (e.clientX === pointer.x && e.clientY === pointer.y) return false;
+    pointer = { x: e.clientX, y: e.clientY };
+    return true;
+  }
+
+  // The bin on a row asks first, in the panel (a native alert would take focus and hide it).
+  const [confirmDel, setConfirmDel] = createSignal<SessionRow | null>(null);
+  function confirmDelete() {
+    const row = confirmDel();
+    setConfirmDel(null);
+    if (!row) return;
+    setPicked(new Set<string>());
+    const i = filtered().indexOf(row);
+    if (i >= 0) setSelected(i);
+    send({ type: "delete", id: row.id });
+    input.focus();
+  }
+  function onConfirmKey(e: KeyboardEvent) {
+    if (!confirmDel()) return;
+    if (e.key === "Escape" || e.key === "Enter") {
+      e.preventDefault();
+      e.stopPropagation();
+      if (e.key === "Enter") confirmDelete();
+      else {
+        setConfirmDel(null);
+        input.focus();
+      }
+    } else if (!e.metaKey) {
+      // Nothing else reaches the panel while it asks.
+      e.preventDefault();
+      e.stopPropagation();
+    }
+  }
+  createEffect(on(overlay, () => setConfirmDel(null)));
 
   function deleteSelected() {
     const rows = targets();
@@ -1056,12 +1096,18 @@ export default function App() {
     const animate = isTall !== wasTall && from > 0;
     wasTall = isTall;
     const run = ++sizing;
+    // Growing into the chat or history: the tall layout is already in the DOM but the window
+    // is still small, so it would be squeezed into the bar's height for a few frames (the text
+    // jumps), then reflow on every frame of the resize. Lay it out at its final height from
+    // the first frame instead; the window then just opens over it.
+    if (animate && isTall) panel.style.height = `${h}px`;
     await limitSize(undefined);
     if (animate) {
       growing = true;
       await invoke("animate_size", { width: w, height: h }).catch(() => win.setSize(new LogicalSize(w, h)));
       if (run === sizing) growing = false;
     } else await win.setSize(new LogicalSize(w, h));
+    if (run === sizing) panel.style.height = "";
     if (run === sizing) limitSize(isTall ? null : h);
   };
   createEffect(() => win.setResizable(!full()).catch(() => {}));
@@ -1240,6 +1286,7 @@ export default function App() {
       autosize();
     });
     window.addEventListener("keydown", onShiftEsc, true);
+    window.addEventListener("keydown", onConfirmKey, true);
     window.addEventListener("keydown", onWindowKeyDown);
     onCleanup(() => {
       window.removeEventListener("keydown", onShiftEsc, true);
@@ -1292,7 +1339,7 @@ export default function App() {
   // Drag the panel by any spot that isn't a control or selectable text; it reopens where it's left.
   function onMouseDown(e: MouseEvent) {
     if (e.button !== 0 || full()) return;
-    if ((e.target as HTMLElement).closest("button, a, textarea, input, .pref, .answer, .list, .logo, .keys-layer")) return;
+    if ((e.target as HTMLElement).closest("button, a, textarea, input, .pref, .answer, .list, .logo, .keys-layer, .confirm-layer")) return;
     e.preventDefault();
     win.startDragging();
   }
@@ -1443,7 +1490,7 @@ export default function App() {
             <button
               class="pref"
               classList={{ selected: i() === prefRow() }}
-              onMouseMove={() => setPrefRow(i())}
+              onMouseMove={(e) => moved(e) && setPrefRow(i())}
               onClick={() => togglePref(row.key)}
             >
               <span class="pref-text">
@@ -1459,7 +1506,7 @@ export default function App() {
         <div
           class="pref"
           classList={{ selected: prefRow() === themeRow }}
-          onMouseMove={() => setPrefRow(themeRow)}
+          onMouseMove={(e) => moved(e) && setPrefRow(themeRow)}
         >
           <span class="pref-text">
             <span class="pref-title">Theme</span>
@@ -1486,7 +1533,7 @@ export default function App() {
         <div
           class="pref"
           classList={{ selected: prefRow() === accentRow }}
-          onMouseMove={() => setPrefRow(accentRow)}
+          onMouseMove={(e) => moved(e) && setPrefRow(accentRow)}
         >
           <span class="pref-text">
             <span class="pref-title">Accent colour</span>
@@ -1514,7 +1561,7 @@ export default function App() {
         <div
           class="pref"
           classList={{ selected: prefRow() === scrollRow }}
-          onMouseMove={() => setPrefRow(scrollRow)}
+          onMouseMove={(e) => moved(e) && setPrefRow(scrollRow)}
         >
           <span class="pref-text">
             <span class="pref-title">While Claude writes</span>
@@ -1541,7 +1588,7 @@ export default function App() {
         <div
           class="pref"
           classList={{ selected: prefRow() === sizeRow }}
-          onMouseMove={() => setPrefRow(sizeRow)}
+          onMouseMove={(e) => moved(e) && setPrefRow(sizeRow)}
         >
           <span class="pref-text">
             <span class="pref-title">Text size</span>
@@ -1622,7 +1669,7 @@ export default function App() {
                   picked: picked().has(row.id),
                   armed: armed() && isTarget(row.id),
                 }}
-                onMouseMove={() => !picked().size && setSelected(i())}
+                onMouseMove={(e) => moved(e) && !picked().size && setSelected(i())}
                 onClick={(e) => onRowClick(e, i(), row)}
               >
                 <Show when={active().has(row.id)}>
@@ -1634,6 +1681,26 @@ export default function App() {
                   </svg>
                 </Show>
                 <span class="title">{row.title}</span>
+                <span
+                  class="bin"
+                  role="button"
+                  title="Delete this chat"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    setConfirmDel(row);
+                  }}
+                >
+                  <svg viewBox="0 0 16 16" width="13" height="13" aria-hidden="true">
+                    <path
+                      d="M2.5 4h11M6 4V2.5h4V4M4 4l.7 9.5h6.6L12 4M6.8 6.5v4.5M9.2 6.5v4.5"
+                      fill="none"
+                      stroke="currentColor"
+                      stroke-width="1.3"
+                      stroke-linecap="round"
+                      stroke-linejoin="round"
+                    />
+                  </svg>
+                </span>
                 <span class="when" classList={{ flash: !!pinFlash()?.ids.has(row.id) && !(armed() && isTarget(row.id)) }}>
                   {!(armed() && isTarget(row.id))
                     ? pinFlash()?.ids.has(row.id)
@@ -1653,6 +1720,24 @@ export default function App() {
         </Show>
       </div>
       <Show when={picked().size > 1}>{footer([`${picked().size} selected`])}</Show>
+      <Show when={confirmDel()}>
+        {(row) => (
+          <div class="confirm-layer" onClick={() => setConfirmDel(null)}>
+            <div class="confirm" role="alertdialog" onClick={(e) => e.stopPropagation()}>
+              <div class="confirm-title">Delete this chat?</div>
+              <div class="confirm-detail">“{row().title}” is removed from Claude Code. This can't be undone.</div>
+              <div class="confirm-buttons">
+                <button class="confirm-cancel" onClick={() => setConfirmDel(null)}>
+                  Cancel
+                </button>
+                <button class="confirm-delete" ref={(el) => queueMicrotask(() => el.focus())} onClick={confirmDelete}>
+                  Delete
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
+      </Show>
     </>
   );
 

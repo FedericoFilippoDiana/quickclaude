@@ -543,6 +543,92 @@ textarea::placeholder {
   text-overflow: ellipsis;
 }
 
+/* The bin: shows on the row under the cursor; click asks before deleting. */
+.row .bin {
+  align-self: center;
+  display: grid;
+  place-items: center;
+  width: 22px;
+  height: 22px;
+  margin: -4px -4px -4px 0;
+  border-radius: 6px;
+  color: var(--muted);
+  flex-shrink: 0;
+  opacity: 0;
+  cursor: pointer;
+  transition: opacity 0.12s ease, color 0.12s ease, background-color 0.12s ease;
+}
+
+.row.selected .bin,
+.row:hover .bin {
+  opacity: 1;
+}
+
+.row .bin:hover {
+  color: var(--error);
+  background: var(--hover);
+}
+
+/* Delete confirmation: a small card over the dimmed history. */
+.confirm-layer {
+  position: fixed;
+  inset: 0;
+  z-index: 20;
+  display: grid;
+  place-items: center;
+  background: rgba(0, 0, 0, 0.28);
+  border-radius: 14px;
+  animation: view-in 0.14s ease-out both;
+}
+
+.confirm {
+  width: min(340px, calc(100vw - 48px));
+  padding: 18px 18px 14px;
+  border-radius: 12px;
+  background: var(--panel-solid);
+  border: 1px solid var(--line);
+  box-shadow: 0 12px 36px rgba(0, 0, 0, 0.3);
+  text-align: left;
+}
+
+.confirm-title {
+  font-weight: 600;
+  font-size: calc(19px * var(--ts));
+}
+
+.confirm-detail {
+  margin-top: 6px;
+  font-size: calc(16px * var(--ts));
+  line-height: 1.4;
+  color: var(--muted);
+  overflow-wrap: anywhere;
+}
+
+.confirm-buttons {
+  margin-top: 16px;
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+.confirm-buttons button {
+  padding: 5px 14px;
+  border-radius: 7px;
+  font-size: calc(16px * var(--ts));
+  color: var(--text);
+  background: var(--faint);
+}
+
+.confirm-buttons .confirm-delete {
+  background: #d93a3a;
+  color: #fff;
+}
+
+.confirm-buttons button:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+
 .row .when {
   font-size: calc(18px * var(--ts));
   color: var(--muted);
