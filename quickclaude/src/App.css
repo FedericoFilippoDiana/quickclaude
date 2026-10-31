@@ -4,6 +4,8 @@
   --faint: rgba(255, 255, 255, 0.08);
   --line: rgba(255, 255, 255, 0.1);
   --accent: #d97757;
+  /* The accent as r, g for translucent tints (bubbles, glows); the same in both themes. */
+  --accent-rgb: 217, 119, 87;
   --error: #ff8a80;
   --warn: #e0a03c;
   --code-bg: rgba(0, 0, 0, 0.3);
@@ -41,6 +43,46 @@
     --dot: rgba(0, 0, 0, 0.2);
     --hint: rgba(0, 0, 0, 0.35);
     --switch-off: rgba(0, 0, 0, 0.15);
+  }
+}
+
+/* Accent colour (Preferences → Accent): the UI sets data-accent on <html>; clay is the default. */
+:root[data-accent="blue"] {
+  --accent: #5b9cf5;
+  --accent-rgb: 91, 156, 245;
+}
+:root[data-accent="green"] {
+  --accent: #4fb37a;
+  --accent-rgb: 79, 179, 122;
+}
+:root[data-accent="teal"] {
+  --accent: #3fb8b0;
+  --accent-rgb: 63, 184, 176;
+}
+:root[data-accent="purple"] {
+  --accent: #a07cf0;
+  --accent-rgb: 160, 124, 240;
+}
+:root[data-accent="pink"] {
+  --accent: #e96fa6;
+  --accent-rgb: 233, 111, 166;
+}
+
+@media (prefers-color-scheme: light) {
+  :root[data-accent="blue"] {
+    --accent: #2f6fd6;
+  }
+  :root[data-accent="green"] {
+    --accent: #2e8b57;
+  }
+  :root[data-accent="teal"] {
+    --accent: #1f8f88;
+  }
+  :root[data-accent="purple"] {
+    --accent: #7a52d6;
+  }
+  :root[data-accent="pink"] {
+    --accent: #c84a85;
   }
 }
 
@@ -157,7 +199,9 @@ button {
 }
 
 .top-ring.on {
-  opacity: 0.55;
+  /* Settles on a clear border with a soft inner glow, so keep on top is plain to see. */
+  opacity: 1;
+  box-shadow: inset 0 0 0 1.5px var(--accent), inset 0 0 16px rgba(var(--accent-rgb), 0.28);
   animation: top-bloom 0.9s ease-out;
 }
 
@@ -168,7 +212,7 @@ button {
   }
   30% {
     opacity: 1;
-    box-shadow: inset 0 0 0 1.5px var(--accent), inset 0 0 28px rgba(217, 119, 87, 0.35);
+    box-shadow: inset 0 0 0 2px var(--accent), inset 0 0 36px rgba(var(--accent-rgb), 0.5);
   }
 }
 
@@ -245,13 +289,26 @@ textarea::placeholder {
 }
 
 .stop {
-  width: 39px;
-  height: 39px;
+  /* Centred on the input's first line like the spark, so it never makes the bar taller. */
+  width: 30px;
+  height: 30px;
+  margin-top: calc((42px * var(--ts) - 30px) / 2);
+  padding: 0;
+  display: grid;
+  place-items: center;
   border-radius: 50%;
   background: var(--faint);
-  font-size: calc(15px * var(--ts));
+  font-size: 11px;
+  line-height: 1;
   color: var(--muted);
   flex-shrink: 0;
+}
+
+.chat .stop {
+  width: 24px;
+  height: 24px;
+  margin-top: calc((32px * var(--ts) - 24px) / 2);
+  font-size: 9px;
 }
 
 .stop:hover {
@@ -472,11 +529,11 @@ textarea::placeholder {
 }
 
 .row.picked {
-  background: rgba(217, 119, 87, 0.18);
+  background: rgba(var(--accent-rgb), 0.18);
 }
 
 .row.picked.selected {
-  background: rgba(217, 119, 87, 0.26);
+  background: rgba(var(--accent-rgb), 0.26);
 }
 
 .row .title {
@@ -510,13 +567,12 @@ textarea::placeholder {
   flex-shrink: 0;
   margin-right: -4px;
   fill: var(--accent);
-  animation: pin-in 0.32s cubic-bezier(0.3, 0.7, 0.3, 1.4);
+  animation: pin-in 0.2s ease-out;
 }
 
 @keyframes pin-in {
   from {
     opacity: 0;
-    transform: scale(0.4) rotate(-30deg);
   }
 }
 
@@ -609,13 +665,71 @@ textarea::placeholder {
   -webkit-user-select: text;
 }
 
+.list-wrap {
+  position: relative;
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+/* ↓ to the end of the chat: shown when there's more below; a soft pulse while a reply is still being written. */
+.to-bottom {
+  position: absolute;
+  left: 50%;
+  bottom: 10px;
+  width: 28px;
+  height: 28px;
+  margin-left: -14px;
+  display: grid;
+  place-items: center;
+  padding: 0;
+  border: 1px solid var(--line);
+  border-radius: 50%;
+  background: var(--panel-solid);
+  color: var(--text);
+  box-shadow: 0 2px 10px rgba(0, 0, 0, 0.25);
+  cursor: pointer;
+  opacity: 0;
+  transform: translateY(6px);
+  pointer-events: none;
+  transition: opacity 0.18s, transform 0.18s;
+}
+
+.to-bottom.shown {
+  opacity: 1;
+  transform: none;
+  pointer-events: auto;
+}
+
+.to-bottom:hover {
+  color: var(--accent);
+}
+
+.to-bottom.live.shown {
+  color: var(--accent);
+  animation: to-bottom-pulse 1.6s ease-in-out infinite;
+}
+
+@keyframes to-bottom-pulse {
+  50% {
+    box-shadow: 0 2px 10px rgba(0, 0, 0, 0.25), 0 0 0 4px rgba(var(--accent-rgb), 0.18);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .to-bottom.live.shown {
+    animation: none;
+  }
+}
+
 .msg.user {
   align-self: flex-end;
   max-width: 80%;
 }
 
 .bubble {
-  background: rgba(217, 119, 87, 0.22);
+  background: rgba(var(--accent-rgb), 0.22);
   padding: 8px 12px;
   border-radius: 12px 12px 4px 12px;
   white-space: pre-wrap;
@@ -1041,32 +1155,57 @@ textarea::placeholder {
   color: #fff;
 }
 
-/* --- motion: views and new messages ease in; the panel's own resize is AppKit's --- */
+/* Accent picker: a row of colour dots in Preferences. */
+.swatches {
+  display: flex;
+  gap: 8px;
+  flex-shrink: 0;
+}
 
-/* A view taking the panel's place fades in and settles from just below. */
+.swatches span {
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+  background: var(--swatch);
+  cursor: pointer;
+  box-shadow: 0 0 0 2px transparent;
+  transition: box-shadow 0.15s, transform 0.15s;
+}
+
+.swatches span:hover {
+  transform: scale(1.1);
+}
+
+.swatches span.on {
+  box-shadow: 0 0 0 2px var(--panel-solid), 0 0 0 4px var(--swatch);
+}
+
+/* --- motion: views fade, new messages ease in; the panel's own resize is AppKit's and its
+   show / hide a native fade. Nothing moves text while the window resizes, so no bounce. --- */
+
+/* A view taking the panel's place fades in, in place. */
 .history,
 .list,
 .prefs,
 .answer {
-  animation: view-in 0.26s cubic-bezier(0.22, 1, 0.36, 1) both;
+  animation: view-in 0.18s ease-out both;
 }
 
 @keyframes view-in {
   from {
     opacity: 0;
-    transform: translateY(6px);
   }
 }
 
-/* Each message rises into place as it arrives. */
-.msg {
-  animation: msg-in 0.32s cubic-bezier(0.22, 1, 0.36, 1) both;
+/* A message rises into place as it arrives in a live chat (not when a chat is opened whole). */
+.msg.arrive {
+  animation: msg-in 0.24s cubic-bezier(0.22, 1, 0.36, 1) both;
 }
 
 @keyframes msg-in {
   from {
     opacity: 0;
-    transform: translateY(8px) scale(0.99);
+    transform: translateY(6px);
   }
 }
 

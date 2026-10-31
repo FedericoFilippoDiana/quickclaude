@@ -46,11 +46,15 @@ struct Prefs {
     theme: String,
     /// Scale for every font size in the panel; 1 is the default.
     text_size: f64,
+    /// Accent colour of the panel: "clay" (the default), "blue", "green", "teal", "purple" or "pink".
+    accent: String,
+    /// How the chat scrolls while a reply is written: "follow", "stay" or "top".
+    chat_scroll: String,
 }
 
 impl Default for Prefs {
     fn default() -> Self {
-        Self { bring_forward: false, sound: true, notification: true, usage_bar: true, key_hints: false, theme: "system".into(), text_size: 1.0 }
+        Self { bring_forward: false, sound: true, notification: true, usage_bar: true, key_hints: false, theme: "system".into(), text_size: 1.0, accent: "clay".into(), chat_scroll: "follow".into() }
     }
 }
 
@@ -294,9 +298,79 @@ fn show_panel(app: &AppHandle) {
             let _ = window.set_position(at);
         }
     }
+    // A show cancels a fade-out still under way.
+    app.state::<Fading>().0.fetch_add(1, Ordering::Relaxed);
+    set_alpha(&window, 0.0, None);
     let _ = window.show();
     let _ = window.set_focus();
     let _ = window.emit("panel-shown", ());
+    set_alpha(&window, 1.0, Some(SHOW_FADE));
+}
+
+/// Show and hide fade the whole window (blur and shadow included), Spotlight-like. Only the
+/// window fades: scaling the content made the text shimmer.
+const SHOW_FADE: f64 = 0.18;
+const HIDE_FADE: f64 = 0.12;
+
+/// Counts shows, so a fade-out finishing after the panel was shown again leaves it up.
+#[derive(Default)]
+struct Fading(std::sync::atomic::AtomicU64, AtomicBool);
+
+/// Set the window's opacity, animated over `secs` with AppKit's animator proxy, or at once.
+fn set_alpha(window: &WebviewWindow, alpha: f64, secs: Option<f64>) {
+    #[cfg(target_os = "macos")]
+    {
+        let target = window.clone();
+        let _ = window.run_on_main_thread(move || {
+            if let Ok(ptr) = target.ns_window() {
+                use objc2::{class, msg_send, runtime::AnyObject};
+                unsafe {
+                    let ns = &*(ptr as *const AnyObject);
+                    match secs {
+                        Some(secs) => {
+                            let ctx = class!(NSAnimationContext);
+                            let () = msg_send![ctx, beginGrouping];
+                            let current: *mut AnyObject = msg_send![ctx, currentContext];
+                            let () = msg_send![current, setDuration: secs];
+                            let animator: *mut AnyObject = msg_send![ns, animator];
+                            let () = msg_send![animator, setAlphaValue: alpha];
+                            let () = msg_send![ctx, endGrouping];
+                        }
+                        None => {
+                            let () = msg_send![ns, setAlphaValue: alpha];
+                        }
+                    }
+                }
+            }
+        });
+    }
+    #[cfg(not(target_os = "macos"))]
+    let _ = (window, alpha, secs);
+}
+
+/// Hide the panel with a short fade-out (Esc, ⌥Space, click-away).
+fn hide_panel(app: &AppHandle) {
+    let window = panel(app);
+    let fading = app.state::<Fading>();
+    if !window.is_visible().unwrap_or(false) || fading.1.swap(true, Ordering::Relaxed) {
+        return;
+    }
+    let shown = fading.0.load(Ordering::Relaxed);
+    set_alpha(&window, 0.0, Some(HIDE_FADE));
+    let app = app.clone();
+    std::thread::spawn(move || {
+        std::thread::sleep(std::time::Duration::from_secs_f64(HIDE_FADE + 0.02));
+        let fading = app.state::<Fading>();
+        fading.1.store(false, Ordering::Relaxed);
+        if fading.0.load(Ordering::Relaxed) == shown {
+            let _ = panel(&app).hide();
+        }
+    });
+}
+
+#[tauri::command]
+fn hide(app: AppHandle) {
+    hide_panel(&app);
 }
 
 /// Grow or shrink the panel to `width`×`height` (logical), keeping its top edge, with AppKit's own
@@ -394,8 +468,11 @@ fn set_full(app: AppHandle, full: bool, width: f64, height: f64) -> Result<(), S
 fn toggle_panel(app: &AppHandle) {
     let window = panel(app);
     let visible = window.is_visible().unwrap_or(false);
-    if visible && window.is_focused().unwrap_or(false) {
-        let _ = window.hide();
+    if app.state::<Fading>().1.load(Ordering::Relaxed) {
+        // ⌥Space again while it fades out: bring it back.
+        show_panel(app);
+    } else if visible && window.is_focused().unwrap_or(false) {
+        hide_panel(app);
     } else if visible {
         // A panel kept on top behind another app: just bring focus back, keep what's in it.
         let _ = window.set_focus();
@@ -426,9 +503,10 @@ pub fn run() {
         .manage(Fresh::default())
         .manage(Glide::default())
         .manage(OnTop::default())
+        .manage(Fading::default())
         .manage(Full::default())
         .manage(Mutex::new(load_prefs()))
-        .invoke_handler(tauri::generate_handler![agent_send, get_prefs, set_prefs, preview_sound, set_on_top, set_full, center_panel, set_fresh, animate_size])
+        .invoke_handler(tauri::generate_handler![agent_send, get_prefs, set_prefs, preview_sound, set_on_top, set_full, center_panel, set_fresh, animate_size, hide])
         .setup(move |app| {
             // Menu-bar app: no Dock icon, no app switcher entry.
             #[cfg(target_os = "macos")]
@@ -520,7 +598,7 @@ pub fn run() {
             match event {
                 WindowEvent::Focused(false) => {
                     if !window.state::<OnTop>().0.load(Ordering::Relaxed) {
-                        let _ = window.hide();
+                        hide_panel(window.app_handle());
                     }
                 }
                 _ => {}

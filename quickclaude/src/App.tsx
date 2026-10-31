@@ -153,13 +153,34 @@ type Prefs = {
   notification: boolean;
   usageBar: boolean;
   keyHints: boolean;
-  theme: Theme; textSize: number };
-type Toggle = Exclude<keyof Prefs, "theme" | "textSize">;
+  theme: Theme;
+  textSize: number;
+  accent: string;
+  chatScroll: ChatScroll;
+};
+type Toggle = Exclude<keyof Prefs, "theme" | "textSize" | "accent" | "chatScroll">;
+// How the chat scrolls while a reply is written (Preferences → While Claude writes).
+type ChatScroll = "follow" | "stay" | "top";
+const CHAT_SCROLLS: { value: ChatScroll; label: string; detail: string }[] = [
+  { value: "follow", label: "Follow", detail: "Follows the reply until your question reaches the top, then stays put." },
+  { value: "stay", label: "Stay", detail: "Never scrolls by itself; ↓ takes you to the end." },
+  { value: "top", label: "Top", detail: "Your question goes to the top right away and the reply fills the space below." },
+];
 const THEMES: { value: Theme; label: string }[] = [
   { value: "system", label: "System" },
   { value: "light", label: "Light" },
   { value: "dark", label: "Dark" },
 ];
+// Accent colours (Preferences → Accent); the CSS holds each one's dark and light shade.
+const ACCENTS: { value: string; label: string; swatch: string }[] = [
+  { value: "clay", label: "Clay", swatch: "#d97757" },
+  { value: "blue", label: "Blue", swatch: "#5b9cf5" },
+  { value: "green", label: "Green", swatch: "#4fb37a" },
+  { value: "teal", label: "Teal", swatch: "#3fb8b0" },
+  { value: "purple", label: "Purple", swatch: "#a07cf0" },
+  { value: "pink", label: "Pink", swatch: "#e96fa6" },
+];
+const applyAccent = (accent: string) => (document.documentElement.dataset.accent = accent || "clay");
 // Text size, as a scale of the default: any step between these.
 const TEXT_SIZE = { min: 0.7, max: 1.5, step: 0.05 };
 const applyTextSize = (size: number) => document.documentElement.style.setProperty("--ts", String(size || 1));
@@ -246,7 +267,7 @@ const KEY_SECTIONS: { title: string; rows: { keys: string[]; title: string }[] }
     rows: [
       { keys: ["↑", "↓"], title: "Choose a setting" },
       { keys: ["space"], title: "Turn it on or off" },
-      { keys: ["←", "→"], title: "Change the theme or text size" },
+      { keys: ["←", "→"], title: "Change the theme, accent colour, scrolling or text size" },
     ],
   },
 ];
@@ -280,6 +301,12 @@ export default function App() {
   const [usageShown, setUsageShown] = createSignal(false);
   // Busy, or waiting on background work that will reply by itself.
   const working = () => busy() || tasks() > 0;
+  // Messages added in this tick ease in; a chat opened whole just appears.
+  let arriving = false;
+  const arrive = () => {
+    arriving = true;
+    queueMicrotask(() => (arriving = false));
+  };
   // Chats that finished while you were away and you haven't looked at yet, newest last.
   const [unseen, setUnseen] = createSignal<string[]>([]);
   const markSeen = (id: string | null) => id && setUnseen((u) => u.filter((x) => x !== id));
@@ -469,6 +496,7 @@ export default function App() {
     if (next.usageBar && !prefs()?.usageBar) send({ type: "usage" });
     setPrefs(next);
     applyTextSize(next.textSize);
+    applyAccent(next.accent);
     // The input's height was measured at the old size.
     queueMicrotask(autosize);
     invoke("set_prefs", { new: next }).catch((e) => setNotice(`Couldn't save preferences: ${e}`));
@@ -488,8 +516,25 @@ export default function App() {
     const i = THEMES.findIndex((t) => t.value === p.theme);
     savePrefs({ ...p, theme: THEMES[(Math.max(i, 0) + step + THEMES.length) % THEMES.length].value });
   }
+  // The accent row follows the theme; ←→ and ↩ move through the colours.
+  const accentRow = themeRow + 1;
+  function stepAccent(step: number) {
+    const p = prefs();
+    if (!p) return;
+    const i = Math.max(ACCENTS.findIndex((a) => a.value === p.accent), 0);
+    savePrefs({ ...p, accent: ACCENTS[(i + step + ACCENTS.length) % ACCENTS.length].value });
+  }
+  // How the chat scrolls while Claude writes; ←→ and ↩ move through the three ways.
+  const scrollRow = accentRow + 1;
+  const chatScroll = (): ChatScroll => prefs()?.chatScroll || "follow";
+  function stepScroll(step: number) {
+    const p = prefs();
+    if (!p) return;
+    const i = Math.max(CHAT_SCROLLS.findIndex((c) => c.value === p.chatScroll), 0);
+    savePrefs({ ...p, chatScroll: CHAT_SCROLLS[(i + step + CHAT_SCROLLS.length) % CHAT_SCROLLS.length].value });
+  }
   // The text size row comes last; ←→ move it a step, ↩ puts it back to 100%.
-  const sizeRow = themeRow + 1;
+  const sizeRow = scrollRow + 1;
   function setTextSize(size: number) {
     const p = prefs();
     if (!p) return;
@@ -498,19 +543,27 @@ export default function App() {
   }
   const stepSize = (step: number) => setTextSize((prefs()?.textSize || 1) + step * TEXT_SIZE.step);
   function onPrefsKey(e: KeyboardEvent) {
-    const n = PREF_ROWS.length + 2;
+    const n = PREF_ROWS.length + 4;
     if (e.key === "ArrowDown" || e.key === "ArrowUp") {
       e.preventDefault();
       setPrefRow((i) => (i + (e.key === "ArrowDown" ? 1 : n - 1)) % n);
     } else if (prefRow() === themeRow && (e.key === "ArrowLeft" || e.key === "ArrowRight")) {
       e.preventDefault();
       stepTheme(e.key === "ArrowRight" ? 1 : -1);
+    } else if (prefRow() === accentRow && (e.key === "ArrowLeft" || e.key === "ArrowRight")) {
+      e.preventDefault();
+      stepAccent(e.key === "ArrowRight" ? 1 : -1);
+    } else if (prefRow() === scrollRow && (e.key === "ArrowLeft" || e.key === "ArrowRight")) {
+      e.preventDefault();
+      stepScroll(e.key === "ArrowRight" ? 1 : -1);
     } else if (prefRow() === sizeRow && (e.key === "ArrowLeft" || e.key === "ArrowRight")) {
       e.preventDefault();
       stepSize(e.key === "ArrowRight" ? 1 : -1);
     } else if (e.key === " " || e.key === "Enter") {
       e.preventDefault();
       if (prefRow() === themeRow) stepTheme(1);
+      else if (prefRow() === accentRow) stepAccent(1);
+      else if (prefRow() === scrollRow) stepScroll(1);
       else if (prefRow() === sizeRow) setTextSize(1);
       else togglePref(PREF_ROWS[prefRow()].key);
     } else if (e.key === "Escape") {
@@ -616,6 +669,7 @@ export default function App() {
         setActive(new Set(ev.ids));
         break;
       case "wake": {
+        arrive();
         // Claude carries on by itself (a background task finished), or a reopened chat is
         // mid-turn: continue its last answer. A /compact gets its own line, as when the chip started it.
         flush();
@@ -664,7 +718,7 @@ export default function App() {
         break;
       case "handoff":
         clear();
-        win.hide();
+        invoke("hide");
         break;
       case "error":
         if (busy() && ev.turn !== undefined) {
@@ -684,6 +738,10 @@ export default function App() {
     if ((!text && !images.length) || (busy() && followUp)) return;
     turn++;
     pending = "";
+    // Lets the chat's scrolling tell a question just asked from a chat being opened.
+    asked = true;
+    queueMicrotask(() => (asked = false));
+    arrive();
     if (!followUp) {
       setMessages([]);
       setSessionId(null);
@@ -767,6 +825,7 @@ export default function App() {
     turn++;
     pending = "";
     setMode("chat");
+    arrive();
     setMessages(messages.length, { role: "assistant", text: "", status: "Compacting…" });
     setBusy(true);
     setNotice("");
@@ -875,7 +934,7 @@ export default function App() {
         // Back to an empty input. A chat that's still working keeps running in the background
         // (green lamp in history, notification when it replies).
         reset();
-      } else win.hide();
+      } else invoke("hide");
     } else if (e.key === "Backspace" && !draft() && attachments().length) {
       e.preventDefault();
       setAttachments((a) => a.slice(0, -1));
@@ -1028,14 +1087,96 @@ export default function App() {
     });
   });
 
-  // Keep the chat scrolled to the newest text while it streams.
+  // Chat scrolling, three ways (Preferences → While Claude writes):
+  // - follow: the view follows a reply only until your question reaches the top, then stays put;
+  // - stay: after you ask, the view shows your question at the bottom and never moves by itself;
+  // - top: your question goes straight to the top, with blank room below that the reply fills.
+  // Opening a chat or changing view jumps to the end; scrolling yourself stops any following.
+  // The ↓ button appears whenever there is more below.
+  const [below, setBelow] = createSignal(false);
+  let follow = true;
+  let setTop = -1;
+  let asked = false;
+  // The last question pinned to the top ("top"), with room added below it.
+  let pinned = false;
+  // Whether the view sits at the end, as last measured: a resize keeps it there.
+  let atEnd = true;
+  function updateBelow() {
+    if (!list) return;
+    const more = list.scrollHeight - list.scrollTop - list.clientHeight > 24;
+    atEnd = !more;
+    setBelow(more);
+  }
+  // The panel grows into the chat with AppKit's resize animation, frame by frame: hold the
+  // view where it belongs on each frame (the end, or the pinned question) instead of letting
+  // the text slide.
+  const listResized = new ResizeObserver(() => {
+    if (!list) return;
+    if (pinned) {
+      fitRoom();
+      scrollTo(questionTop());
+    } else if (atEnd) scrollTo(list.scrollHeight);
+    else updateBelow();
+  });
+  onCleanup(() => listResized.disconnect());
+  function scrollTo(top: number) {
+    if (!list) return;
+    list.scrollTop = top;
+    setTop = list.scrollTop;
+    updateBelow();
+  }
+  // Where the view's top goes to show the last question at the top, in scroll coordinates.
+  function questionTop() {
+    if (!list) return 0;
+    const asked = list.querySelectorAll<HTMLElement>(".msg.user");
+    const q = asked[asked.length - 1];
+    if (!q) return list.scrollHeight;
+    return q.getBoundingClientRect().top - list.getBoundingClientRect().top + list.scrollTop - 12;
+  }
+  // "top": pad the list's bottom just enough that the question can sit at the top; the
+  // padding shrinks as the reply grows, so nothing moves.
+  function fitRoom() {
+    if (!list) return;
+    if (!pinned) {
+      list.style.paddingBottom = "";
+      return;
+    }
+    const room = parseFloat(list.style.paddingBottom || "0") ? parseFloat(list.style.paddingBottom) - 16 : 0;
+    const content = list.scrollHeight - room;
+    list.style.paddingBottom = `${16 + Math.max(0, questionTop() + list.clientHeight - content)}px`;
+  }
+  function followReply() {
+    if (!list) return;
+    const end = list.scrollHeight - list.clientHeight;
+    scrollTo(Math.max(list.scrollTop, Math.min(end, questionTop())));
+  }
+  function onListScroll() {
+    // A scroll we didn't make is the user's: stop following this reply.
+    if (list && Math.abs(list.scrollTop - setTop) > 2) follow = false;
+    updateBelow();
+  }
+  function toBottom() {
+    follow = false;
+    list?.scrollTo({ top: list.scrollHeight, behavior: "smooth" });
+  }
+  createEffect(
+    on([() => messages.length, mode, overlay], ([len, m], prev) => {
+      if (!prev || prev[0] !== len || prev[1] !== m) pinned = asked && chatScroll() === "top";
+      if (mode() !== "chat" || !list) return;
+      follow = chatScroll() === "follow";
+      fitRoom();
+      scrollTo(pinned ? questionTop() : list.scrollHeight);
+    }),
+  );
   createEffect(() => {
     const m = messages[messages.length - 1];
     m?.text;
     m?.status;
-    messages.length;
-    overlay();
-    if (mode() === "chat" && list) list.scrollTop = list.scrollHeight;
+    notice();
+    if (mode() !== "chat" || !list) return;
+    fitRoom();
+    if (follow) followReply();
+    else updateBelow();
   });
 
   // ⇧Esc: hide and change nothing, so the panel reopens exactly as it was. Caught while
@@ -1044,7 +1185,7 @@ export default function App() {
     if (!e.shiftKey || e.key !== "Escape") return;
     e.preventDefault();
     e.stopPropagation();
-    win.hide();
+    invoke("hide");
   }
 
   // Selecting text in the chat moves focus off the input; the panel's keys should still work.
@@ -1094,6 +1235,7 @@ export default function App() {
     invoke<Prefs>("get_prefs").then((p) => {
       setPrefs(p);
       applyTextSize(p.textSize);
+      applyAccent(p.accent);
       if (p.usageBar) send({ type: "usage" });
       autosize();
     });
@@ -1343,6 +1485,61 @@ export default function App() {
         </div>
         <div
           class="pref"
+          classList={{ selected: prefRow() === accentRow }}
+          onMouseMove={() => setPrefRow(accentRow)}
+        >
+          <span class="pref-text">
+            <span class="pref-title">Accent colour</span>
+            <span class="pref-detail">The colour of the spark, your messages and highlights.</span>
+          </span>
+          <span class="swatches" role="radiogroup">
+            <For each={ACCENTS}>
+              {(a) => (
+                <span
+                  role="radio"
+                  title={a.label}
+                  aria-label={a.label}
+                  aria-checked={(prefs()?.accent || "clay") === a.value}
+                  classList={{ on: (prefs()?.accent || "clay") === a.value }}
+                  style={{ "--swatch": a.swatch }}
+                  onClick={() => {
+                    const p = prefs();
+                    if (p) savePrefs({ ...p, accent: a.value });
+                  }}
+                />
+              )}
+            </For>
+          </span>
+        </div>
+        <div
+          class="pref"
+          classList={{ selected: prefRow() === scrollRow }}
+          onMouseMove={() => setPrefRow(scrollRow)}
+        >
+          <span class="pref-text">
+            <span class="pref-title">While Claude writes</span>
+            <span class="pref-detail">{CHAT_SCROLLS.find((c) => c.value === chatScroll())!.detail}</span>
+          </span>
+          <span class="segments" role="radiogroup">
+            <For each={CHAT_SCROLLS}>
+              {(c) => (
+                <span
+                  role="radio"
+                  aria-checked={chatScroll() === c.value}
+                  classList={{ on: chatScroll() === c.value }}
+                  onClick={() => {
+                    const p = prefs();
+                    if (p) savePrefs({ ...p, chatScroll: c.value });
+                  }}
+                >
+                  {c.label}
+                </span>
+              )}
+            </For>
+          </span>
+        </div>
+        <div
+          class="pref"
           classList={{ selected: prefRow() === sizeRow }}
           onMouseMove={() => setPrefRow(sizeRow)}
         >
@@ -1523,10 +1720,18 @@ export default function App() {
               </button>
             </Show>
           </div>
-          <div class="list" ref={list}>
+          <div class="list-wrap">
+          <div
+            class="list"
+            ref={(el) => {
+              list = el;
+              listResized.observe(el);
+            }}
+            onScroll={onListScroll}
+          >
             <For each={messages}>
               {(m) => (
-                <div class={`msg ${m.role}`}>
+                <div class={`msg ${m.role}`} classList={{ arrive: arriving }}>
                   <Show when={m.role === "assistant"} fallback={<UserBody msg={m} />}>
                     <AssistantBody msg={m} />
                   </Show>
@@ -1537,6 +1742,19 @@ export default function App() {
             <Show when={notice()}>
               <div class="error">{notice()}</div>
             </Show>
+          </div>
+          <button
+            class="to-bottom"
+            classList={{ shown: below(), live: busy() }}
+            title="Jump to the end"
+            tabIndex={-1}
+            onMouseDown={(e) => e.preventDefault()}
+            onClick={toBottom}
+          >
+            <svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true">
+              <path d="M8 3v9M4 8l4 4 4-4" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" />
+            </svg>
+          </button>
           </div>
           {bar}
         </Show>
